@@ -7,7 +7,7 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=100) 
     phone_number = models.CharField(max_length=15)
-    national_id = models.CharField(max_length=20, unique=True, null=True, blank=True)  
+    national_id = models.CharField(max_length=20, unique=False, null=True, blank=True)
     national_id_image_url = models.URLField(max_length=500, null=True, blank=True)  
     profile_picture_url = models.URLField(max_length=500, null=True, blank=True)  
     bio = models.TextField(null=True, blank=True)  

@@ -8,6 +8,7 @@ from .serializers import RegisterSerializer, UserSerializer, LoginSerializer
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from rest_framework.views import APIView
 
 # Register new user
 class RegisterView(generics.CreateAPIView):
@@ -22,18 +23,26 @@ class UserListView(generics.ListAPIView):
     permission_classes = [permissions.IsAdminUser]
 
 #  Login view using token authentication
-class CustomLoginView(ObtainAuthToken):
-    def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        token = Token.objects.get(key=response.data['token'])
-        return Response({
-            'token': token.key,
-            'user_id': token.user.id,
-            'username': token.user.username,
-            'email': token.user.email,
-            'role': token.user.role,
-            'status': token.user.status,
-        })
+class CustomLoginView(APIView):
+    permission_classes = []  # Allow anyone to login
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+
+            # Get or create auth token
+            token, _ = Token.objects.get_or_create(user=user)
+
+            return Response({
+                'token': token.key,
+                'user_id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'status': user.status,
+            })
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 #View user profile
 @api_view(['GET'])

@@ -1,7 +1,8 @@
-# users/serializers.py
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth import authenticate  
 from .models import User
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -14,7 +15,6 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
 
-#  Registration Serializer
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, required=True)
@@ -22,12 +22,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'username', 'email', 'password', 'password2', 'full_name', 
+            'username', 'email', 'password', 'password2', 'full_name',
             'phone_number', 'role', 'national_id', 'national_id_image_url'
         ]
 
     def validate(self, attrs):
-        # Confirm passwords match
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Passwords do not match."})
         return attrs
@@ -36,14 +35,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop('password2')
         role = validated_data.get('role')
 
-        # Check required fields for landlord
         if role == 'LANDLORD':
             if not validated_data.get('national_id') or not validated_data.get('national_id_image_url'):
                 raise serializers.ValidationError(
                     {"error": "Landlords must provide both National ID and ID image."}
                 )
 
-        # Create user
         user = User.objects.create(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -57,6 +54,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.save()
         return user
 
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, required=True)
@@ -65,7 +63,14 @@ class LoginSerializer(serializers.Serializer):
         email = attrs.get('email')
         password = attrs.get('password')
 
-        user = authenticate(username=email, password=password)
+        # Find user by email
+        try:
+            user_obj = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid email or password")
+
+        # Authenticate using username (Django uses username internally)
+        user = authenticate(username=user_obj.username, password=password)
 
         if not user:
             raise serializers.ValidationError("Invalid email or password")
