@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth import authenticate  
+from django.contrib.auth import authenticate
 from .models import User
 
 
@@ -63,13 +63,11 @@ class LoginSerializer(serializers.Serializer):
         email = attrs.get('email')
         password = attrs.get('password')
 
-        # Find user by email
         try:
             user_obj = User.objects.get(email=email)
         except User.DoesNotExist:
             raise serializers.ValidationError("Invalid email or password")
 
-        # Authenticate using username (Django uses username internally)
         user = authenticate(username=user_obj.username, password=password)
 
         if not user:
@@ -80,3 +78,20 @@ class LoginSerializer(serializers.Serializer):
 
         attrs['user'] = user
         return attrs
+
+
+class AdminVerificationSerializer(serializers.Serializer):
+    verification_notes = serializers.CharField(required=False, allow_blank=True)
+
+
+# -------------------------
+# Password Reset / OTP
+# -------------------------
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(max_length=6, required=True)
+    new_password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
