@@ -19,6 +19,16 @@ class User(AbstractUser):
     profile_picture_url = models.URLField(max_length=500, null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
 
+    # === New Fields for Landlord Dashboard ===
+    physical_address = models.TextField(null=True, blank=True)
+    proof_of_ownership_url = models.URLField(max_length=500, null=True, blank=True)
+    kra_pin_url = models.URLField(max_length=500, null=True, blank=True)
+    bank_name = models.CharField(max_length=100, null=True, blank=True)
+    bank_account_number = models.CharField(max_length=20, null=True, blank=True)
+    bank_account_name = models.CharField(max_length=100, null=True, blank=True)
+    bank_branch_code = models.CharField(max_length=20, null=True, blank=True)
+    terms_accepted = models.BooleanField(default=False)
+
     ROLE_ADMIN = "ADMIN"
     ROLE_LANDLORD = "LANDLORD"
     ROLE_TENANT = "TENANT"

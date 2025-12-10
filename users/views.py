@@ -165,7 +165,11 @@ def admin_reject_user(request, user_id):
 @permission_classes([IsAuthenticated, IsVerifiedLandlord])
 def landlord_dashboard(request):
     user = request.user
-    return Response({"message": f"Welcome to your landlord dashboard, {user.full_name or user.username}"})
+    data = UserSerializer(user).data  # includes all personal info, docs, bank details
+    return Response({
+        "message": f"Welcome to your landlord dashboard, {user.full_name or user.username}",
+        "profile": data
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsVerifiedTenant])
