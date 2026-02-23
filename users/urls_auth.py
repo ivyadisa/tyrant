@@ -3,7 +3,8 @@ from django.urls import  path
 from wallet.urls import urlpatterns
 from .views import (
     RegisterView, CustomLoginView,
-    request_password_reset, confirm_password_reset, verify_status
+    request_password_reset, confirm_password_reset, verify_status,
+    verify_email, resend_otp
 )
 
 urlpatterns = [
