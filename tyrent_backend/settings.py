@@ -3,30 +3,32 @@ from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
 
-# -------------------------
+# --------------------------------------------------
 # BASE DIRECTORY
-# -------------------------
+# --------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# -------------------------
-# ENVIRONMENT DETECTION
-# -------------------------
-# Load .env.development if it exists, otherwise .env
-if os.path.exists(os.path.join(BASE_DIR, ".env.development")):
-    load_dotenv(os.path.join(BASE_DIR, ".env.development"))
+# --------------------------------------------------
+# LOAD ENVIRONMENT VARIABLES
+# --------------------------------------------------
+env_path_dev = BASE_DIR / ".env.development"
+env_path_default = BASE_DIR / ".env"
+
+if env_path_dev.exists():
+    load_dotenv(env_path_dev)
 else:
-    load_dotenv(os.path.join(BASE_DIR, ".env"))
+    load_dotenv(env_path_default)
 
-# -------------------------
+# --------------------------------------------------
 # GENERAL SETTINGS
-# -------------------------
+# --------------------------------------------------
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-default-key")
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-secret-key")
+DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-# -------------------------
-# HOSTS & CSRF
-# -------------------------
+# --------------------------------------------------
+# ALLOWED HOSTS & SECURITY
+# --------------------------------------------------
 if ENVIRONMENT == "production":
     ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
     CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
@@ -35,14 +37,17 @@ if ENVIRONMENT == "production":
     CSRF_COOKIE_SECURE = True
 else:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-    CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000", "http://localhost:8000"]
+    CSRF_TRUSTED_ORIGINS = [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 
-# -------------------------
+# --------------------------------------------------
 # APPLICATIONS
-# -------------------------
+# --------------------------------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -50,11 +55,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    'django.contrib.sites',
-    'django.contrib.sitemaps',
+
+    # Third-party
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
+
+    # Local apps
     "users",
     "properties",
     "bookings",
@@ -63,8 +70,9 @@ INSTALLED_APPS = [
     "drf_spectacular",
 ]
 
-SITE_ID = 1
-
+# --------------------------------------------------
+# MIDDLEWARE
+# --------------------------------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -77,9 +85,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-# -------------------------
-# CORS CONFIGURATION
-# -------------------------
+# --------------------------------------------------
+# CORS SETTINGS
+# --------------------------------------------------
 if ENVIRONMENT == "production":
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
@@ -87,8 +95,14 @@ if ENVIRONMENT == "production":
 else:
     CORS_ALLOW_ALL_ORIGINS = True
 
+# --------------------------------------------------
+# ROOT URL
+# --------------------------------------------------
 ROOT_URLCONF = "tyrent_backend.urls"
 
+# --------------------------------------------------
+# TEMPLATES
+# --------------------------------------------------
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -107,30 +121,30 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "tyrent_backend.wsgi.application"
 
-# -------------------------
-# DATABASE CONFIGURATION
-# -------------------------
+# --------------------------------------------------
+# DATABASE
+# --------------------------------------------------
 if ENVIRONMENT == "production":
     DATABASES = {
         "default": dj_database_url.config(
-            default=f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}/{os.getenv('DB_NAME')}"
+            default=os.getenv("DATABASE_URL")
         )
     }
 else:
     DATABASES = {
         "default": {
             "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.postgresql"),
-            "NAME": os.getenv("DB_NAME"),
-            "USER": os.getenv("DB_USER"),
-            "PASSWORD": os.getenv("DB_PASSWORD"),
+            "NAME": os.getenv("DB_NAME", "tyrent_db"),
+            "USER": os.getenv("DB_USER", "postgres"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
         }
     }
 
-# -------------------------
-# PASSWORD VALIDATION
-# -------------------------
+# --------------------------------------------------
+# PASSWORD VALIDATORS
+# --------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -138,28 +152,34 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# -------------------------
+# --------------------------------------------------
 # INTERNATIONALIZATION
-# -------------------------
+# --------------------------------------------------
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# -------------------------
+# --------------------------------------------------
 # STATIC FILES
-# -------------------------
+# --------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
-# -------------------------
+# --------------------------------------------------
+# MEDIA FILES
+# --------------------------------------------------
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+# --------------------------------------------------
 # CUSTOM USER MODEL
-# -------------------------
+# --------------------------------------------------
 AUTH_USER_MODEL = "users.User"
 
-# -------------------------
-# DRF CONFIG
-# -------------------------
+# --------------------------------------------------
+# DJANGO REST FRAMEWORK
+# --------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
@@ -170,19 +190,26 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema'
 }
 
-SPECTACULAR_SETTINGS = {
-    "TITLE": "Tyrent API",
-    "DESCRIPTION": "API documentation for Tyrent backend",
-    "VERSION": "1.0.0",
-}
+# --------------------------------------------------
+# EMAIL CONFIGURATION (FOR OTP)
+# --------------------------------------------------
 
+# For Development (prints OTP in terminal)
+if ENVIRONMENT == "development":
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-# -------------------------
-# EMAIL CONFIGURATION (CONSOLE BACKEND)
-# -------------------------
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'no-reply@tyrent.com'
+# For Production (real email sending)
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = os.getenv("EMAIL_HOST")
+    EMAIL_PORT = os.getenv("EMAIL_PORT", 587)
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
 
+# --------------------------------------------------
+# OTP SETTINGS
+# --------------------------------------------------
+OTP_EXPIRATION_MINUTES = 10  
