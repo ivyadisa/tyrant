@@ -28,7 +28,7 @@ class ApartmentSerializer(serializers.ModelSerializer):
             "id", "landlord", "name", "address", "latitude", "longitude",
             "overview_description", "exterior_image_url", "lease_agreement_document_url",
             "rules_and_policies", "amenities", "units",
-            "verification_status", "verification_notes",
+            "verification_status",
             "total_units", "occupied_units", "created_at", "updated_at"
         ]
         read_only_fields = ["landlord", "total_units", "occupied_units", "created_at", "updated_at"]

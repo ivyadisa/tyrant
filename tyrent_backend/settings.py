@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "bookings",
     "wallet",
     "verification",
+    "drf_spectacular",
 ]
 
 # --------------------------------------------------
@@ -163,7 +164,7 @@ USE_TZ = True
 # STATIC FILES
 # --------------------------------------------------
 STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
 # --------------------------------------------------
 # MEDIA FILES
@@ -184,8 +185,9 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema'
 }
 
 # --------------------------------------------------

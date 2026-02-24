@@ -12,6 +12,12 @@ OCCUPANCY_STATUS_CHOICES = [
     ("MAINTENANCE", "Maintenance"),
 ]
 
+class VerificationStatus(models.TextChoices):
+    NOT_REQUESTED = "NOT_REQUESTED", "Not Requested"
+    PENDING = "PENDING", "Pending"
+    VERIFIED = "VERIFIED", "Verified"
+    REJECTED = "REJECTED", "Rejected"
+
 
 class Amenity(models.Model):
     """Lookup table for amenities."""
@@ -36,17 +42,26 @@ class Apartment(models.Model):
     rules_and_policies = models.TextField(blank=True)
     amenities = models.ManyToManyField(Amenity, blank=True, related_name="apartments")
 
-    verification_status = models.CharField(max_length=20, default="PENDING")
-    verification_notes = models.TextField(blank=True)
+    verification_status = models.CharField(
+        max_length = 20,
+        choices = VerificationStatus.choices,
+        default = VerificationStatus.NOT_REQUESTED,
+        db_index = True,
+    )
 
     total_units = models.PositiveIntegerField(default=0)
     occupied_units = models.PositiveIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_approved = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["verification_status"]),
+            models.Index(fields=["landlord"]),
+        ]
 
     def __str__(self):
         return self.name
@@ -61,8 +76,13 @@ class Apartment(models.Model):
 
     # ✅ Added for sitemap
     def get_absolute_url(self):
-        return reverse("properties:apartment_detail", args=[str(self.id)])
+        return reverse("properties:apartment-detail", args=[str(self.id)])
 
+    def approve(self):
+        if self.verification_status != VerificationStatus.VERIFIED:
+            raise ValueError("Apartment must be verified before approval.")
+        self.is_approved = True
+        self.save(update_fields=["is_approved"])
 
 class Unit(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -90,4 +110,4 @@ class Unit(models.Model):
 
     # ✅ Added for sitemap
     def get_absolute_url(self):
-        return reverse("properties:unit_detail", args=[str(self.id)])
+        return reverse("properties:unit-detail", args=[str(self.id)])

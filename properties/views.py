@@ -1,6 +1,9 @@
+from django.core.exceptions import PermissionDenied, ValidationError
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
+
+from verification.models import Verification
 from .models import Apartment, Unit, Amenity
 from .serializers import ApartmentSerializer, UnitSerializer, AmenitySerializer
 from django.shortcuts import get_object_or_404
@@ -55,7 +58,15 @@ class ApartmentViewSet(viewsets.ModelViewSet):
         return Apartment.objects.all()
 
     def perform_create(self, serializer):
-        serializer.save(landlord=self.request.user)
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admins can create verification tasks.")
+
+        apartment = serializer.validated_data["apartment"]
+
+        if apartment.verification_status == "VERIFIED":
+            raise ValidationError("Apartment already verified.")
+
+        serializer.save(landlord=self.request.user, status = Verification.Status.ASSIGNED)
 
 
 class UnitViewSet(viewsets.ModelViewSet):
