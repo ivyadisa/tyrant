@@ -1,7 +1,7 @@
 import uuid
 from django.db import models
 from django.conf import settings
-from properties.models import Unit
+from properties.models import Unit, LeaseAgreement
 
 User = settings.AUTH_USER_MODEL
 
@@ -32,6 +32,8 @@ class Booking(models.Model):
     booking_amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="UNPAID")
     booking_confirmation_code = models.CharField(max_length=10, unique=True)
+    lease_agreement_acknowledged = models.BooleanField(default=False, help_text="Whether tenant acknowledged the lease agreement")
+    lease_agreement = models.ForeignKey(LeaseAgreement, on_delete=models.SET_NULL, null=True, blank=True, related_name="bookings")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
