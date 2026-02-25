@@ -1,8 +1,9 @@
 import uuid
 from django.db import models
-from django.contrib.auth import get_user_model
+from django.conf import settings
+from bookings.models import Booking  # Import Booking model
 
-User = get_user_model()
+User = settings.AUTH_USER_MODEL
 
 class Wallet(models.Model):
     WALLET_TYPE_CHOICES = [
@@ -56,6 +57,9 @@ class WalletTransaction(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     reference_id = models.UUIDField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    mpesa_receipt_number = models.CharField(max_length=50, null=True, blank=True)
+    description = models.TextField(blank=True)
+    booking = models.ForeignKey(Booking, on_delete=models.SET_NULL, null=True, blank=True)  # Link to Booking
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

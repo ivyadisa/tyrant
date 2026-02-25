@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
+from decouple import config
 
 # --------------------------------------------------
 # BASE DIRECTORY
@@ -211,3 +212,9 @@ DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
 # OTP SETTINGS
 # --------------------------------------------------
 OTP_EXPIRATION_MINUTES = 10  
+
+MPESA_CONSUMER_KEY = config('MPESA_CONSUMER_KEY')
+MPESA_CONSUMER_SECRET = config('MPESA_CONSUMER_SECRET')
+MPESA_SHORTCODE = config('MPESA_SHORTCODE')
+MPESA_PASSKEY = config('MPESA_PASSKEY')
+MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL')
