@@ -4,8 +4,8 @@ from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
 
 from verification.models import Verification
-from .models import Apartment, Unit, Amenity
-from .serializers import ApartmentSerializer, UnitSerializer, AmenitySerializer
+from .models import Apartment, Unit, Amenity, LeaseAgreement
+from .serializers import ApartmentSerializer, UnitSerializer, AmenitySerializer, LeaseAgreementSerializer, LeaseAgreementUploadSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.routers import DefaultRouter
 from django.db import transaction
@@ -106,3 +106,66 @@ class UnitViewSet(viewsets.ModelViewSet):
             unit.save()
             unit.apartment.recalc_unit_counts()
         return Response(UnitSerializer(unit).data)
+
+
+class LeaseAgreementViewSet(viewsets.ModelViewSet):
+    queryset = LeaseAgreement.objects.select_related("apartment").all()
+    serializer_class = LeaseAgreementSerializer
+    permission_classes = [IsLandlordOrReadOnly]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = self.queryset
+        apt = self.request.query_params.get("apartment")
+        if apt:
+            qs = qs.filter(apartment__id=apt)
+        if getattr(user, "role", "").upper() == "LANDLORD":
+            qs = qs.filter(apartment__landlord=user)
+        return qs
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'upload_lease'):
+            return LeaseAgreementUploadSerializer
+        return LeaseAgreementSerializer
+
+    @action(detail=False, methods=['post'], url_path='upload', permission_classes=[IsLandlordOrReadOnly])
+    def upload_lease(self, request, apartment_id=None):
+        apartment_id = request.query_params.get('apartment_id') or self.kwargs.get('apartment_id')
+        if not apartment_id:
+            return Response({"detail": "apartment_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        apartment = get_object_or_404(Apartment, id=apartment_id)
+
+        if apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            latest_version = LeaseAgreement.objects.filter(apartment=apartment).order_by('-version').first()
+            new_version = (latest_version.version + 1) if latest_version else 1
+
+            lease = LeaseAgreement.objects.create(
+                apartment=apartment,
+                document=serializer.validated_data['document'],
+                version=new_version
+            )
+            apartment.lease_agreement = lease
+            apartment.save(update_fields=['lease_agreement'])
+
+            return Response(
+                LeaseAgreementSerializer(lease).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'], url_path='verify')
+    def verify_document(self, request, pk=None):
+        lease = self.get_object()
+        data = {
+            "id": lease.id,
+            "version": lease.version,
+            "file_hash": lease.file_hash,
+            "created_at": lease.created_at,
+            "verified": True
+        }
+        return Response(data)
