@@ -14,4 +14,5 @@ class BookingSerializer(serializers.ModelSerializer):
             "payment_status",
             "created_at",
             "updated_at",
+            "lease_agreement",
         ]

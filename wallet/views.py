@@ -4,12 +4,26 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.utils import timezone
+from django.db import transaction
+from decimal import Decimal, InvalidOperation
 from .models import Wallet, WalletTransaction
 from .serializers import WalletSerializer, WalletTransactionSerializer
-from bookings.models import Booking
 from .mpesa import stk_push
+from .tasks import process_mpesa_callback
 import json
+import logging
+from .utils import is_duplicate
+
+logger = logging.getLogger(__name__)
+
+SAFE_MPESA_IPS = [
+    "196.201.214.200",
+    "196.201.214.206",
+    "196.201.213.114",
+    "196.201.214.207",
+    "196.201.214.208"
+]
+
 
 # ----------------- Wallet Views ----------------- #
 
@@ -18,7 +32,8 @@ class WalletDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        return Wallet.objects.get(user=self.request.user)
+        wallet, _ = Wallet.objects.get_or_create(user=self.request.user)
+        return wallet
 
 
 class WalletTransactionListView(generics.ListAPIView):
@@ -29,52 +44,70 @@ class WalletTransactionListView(generics.ListAPIView):
         return WalletTransaction.objects.filter(wallet__user=self.request.user)
 
 
-class WalletWithdrawView(generics.CreateAPIView):
-    serializer_class = WalletTransactionSerializer
-    permission_classes = [IsAuthenticated]
-
-    def create(self, request, *args, **kwargs):
-        wallet = Wallet.objects.get(user=request.user)
-        amount = float(request.data.get("amount"))
-
-        if wallet.balance < amount:
-            return Response({"error": "Insufficient funds"}, status=status.HTTP_400_BAD_REQUEST)
-
-        wallet.withdraw(amount)
-
-        transaction = WalletTransaction.objects.create(
-            wallet=wallet,
-            transaction_type="WITHDRAWAL",
-            amount=amount,
-            status="COMPLETED",
-        )
-
-        return Response(
-            {"message": "Withdrawal successful", "transaction": WalletTransactionSerializer(transaction).data},
-            status=status.HTTP_201_CREATED,
-        )
-
-
 class WalletDepositView(generics.CreateAPIView):
     serializer_class = WalletTransactionSerializer
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        wallet = Wallet.objects.get(user=request.user)
-        amount = float(request.data.get("amount"))
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
 
-        wallet.deposit(amount)
+        try:
+            amount = Decimal(str(request.data.get("amount")))
+            if amount <= 0:
+                raise ValueError("Amount must be greater than zero")
+        except (TypeError, ValueError, InvalidOperation) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        transaction = WalletTransaction.objects.create(
-            wallet=wallet,
-            transaction_type="DEPOSIT",
-            amount=amount,
-            status="COMPLETED",
-        )
+        with transaction.atomic():
+            wallet.deposit(amount)
+            transaction_obj = WalletTransaction.objects.create(
+                wallet=wallet,
+                transaction_type="DEPOSIT",
+                amount=amount,
+                status="COMPLETED",
+            )
 
         return Response(
-            {"message": "Deposit successful", "transaction": WalletTransactionSerializer(transaction).data},
-            status=status.HTTP_201_CREATED,
+            {
+                "message": "Deposit successful",
+                "transaction": WalletTransactionSerializer(transaction_obj).data
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class WalletWithdrawView(generics.CreateAPIView):
+    serializer_class = WalletTransactionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+
+        try:
+            amount = Decimal(str(request.data.get("amount")))
+            if amount <= 0:
+                raise ValueError("Amount must be greater than zero")
+        except (TypeError, ValueError, InvalidOperation) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if wallet.balance < amount:
+            return Response({"error": "Insufficient funds"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            wallet.withdraw(amount)
+            transaction_obj = WalletTransaction.objects.create(
+                wallet=wallet,
+                transaction_type="WITHDRAWAL",
+                amount=amount,
+                status="COMPLETED",
+            )
+
+        return Response(
+            {
+                "message": "Withdrawal successful",
+                "transaction": WalletTransactionSerializer(transaction_obj).data
+            },
+            status=status.HTTP_201_CREATED
         )
 
 
@@ -86,18 +119,55 @@ class InitiatePaymentView(APIView):
     def post(self, request, *args, **kwargs):
         try:
             phone = request.data.get("phone")
-            amount = request.data.get("amount")
-            booking_id = request.data.get("booking_id")  
+            amount = Decimal(str(request.data.get("amount")))
+            booking_id = request.data.get("booking_id")
 
             if not phone or not amount or not booking_id:
-                return Response({"error": "Phone, amount, and booking_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "Phone, amount, and booking_id are required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # Trigger STK Push and include booking_id in callback
-            callback_url = f"{request.build_absolute_uri('/wallet/mpesa/callback/')}?booking_id={booking_id}"
+            wallet, _ = Wallet.objects.get_or_create(user=request.user)
+
+            #  INITIATION IDEMPOTENCY
+            existing_txn = WalletTransaction.objects.filter(
+                wallet=wallet,
+                booking_id=booking_id,
+                status="PENDING"
+            ).first()
+
+            if existing_txn:
+                logger.info(f"Duplicate payment prevented for booking {booking_id}")
+                return Response({
+                    "message": "Payment already initiated",
+                    "checkout_request_id": existing_txn.checkout_request_id
+                }, status=status.HTTP_200_OK)
+
+            callback_url = request.build_absolute_uri("/api/wallet/mpesa/callback/")
+
             response = stk_push(phone, amount, callback_url, booking_id)
 
+            checkout_id = response.get("CheckoutRequestID")
+            merchant_id = response.get("MerchantRequestID")
+
+            WalletTransaction.objects.create(
+                wallet=wallet,
+                transaction_type="DEPOSIT",
+                amount=amount,
+                status="PENDING",
+                checkout_request_id=checkout_id,
+                merchant_request_id=merchant_id,
+                phone_number=phone,
+                booking_id=booking_id
+            )
+
+            logger.info(f"STK push initiated: {checkout_id}")
+
             return Response(response, status=status.HTTP_200_OK)
+
         except Exception as e:
+            logger.error(f"STK Push Error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -105,69 +175,43 @@ class InitiatePaymentView(APIView):
 
 @csrf_exempt
 def mpesa_callback(request):
+
+    ip = request.META.get('REMOTE_ADDR')
+
+    # IP VALIDATION
+    if ip not in SAFE_MPESA_IPS:
+        logger.warning(f"Unauthorized MPESA callback from IP: {ip}")
+        return JsonResponse({"ResultCode": 1, "ResultDesc": "Unauthorized IP"})
+
     if request.method == "POST":
         try:
             data = json.loads(request.body)
-            print("M-Pesa Callback Data:", data)
 
-            result_code = data.get("Body", {}).get("stkCallback", {}).get("ResultCode")
-            result_desc = data.get("Body", {}).get("stkCallback", {}).get("ResultDesc")
-            callback_metadata = data.get("Body", {}).get("stkCallback", {}).get("CallbackMetadata", {}).get("Item", [])
+            stk = data.get("Body", {}).get("stkCallback", {})
+            checkout_id = stk.get("CheckoutRequestID")
 
-            amount = 0
-            phone = None
-            mpesa_receipt = None
+            # CALLBACK IDEMPOTENCY
+            if is_duplicate(checkout_id):
+                logger.warning(f"Duplicate callback ignored: {checkout_id}")
+                return JsonResponse({"ResultCode": 0, "ResultDesc": "Duplicate ignored"})
 
-            for item in callback_metadata:
-                if item.get("Name") == "Amount":
-                    amount = float(item.get("Value"))
-                elif item.get("Name") == "MpesaReceiptNumber":
-                    mpesa_receipt = item.get("Value")
-                elif item.get("Name") == "PhoneNumber":
-                    phone = str(item.get("Value"))
+            try:
+                txn = WalletTransaction.objects.get(checkout_request_id=checkout_id)
+            except WalletTransaction.DoesNotExist:
+                return JsonResponse({"ResultCode": 0, "ResultDesc": "Ignored"})
 
-            if result_code == 0 and phone:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                try:
-                    user = User.objects.get(profile__phone_number=phone)
-                    wallet = Wallet.objects.get(user=user)
-                    wallet.deposit(amount)
+            if txn.status == "COMPLETED":
+                return JsonResponse({"ResultCode": 0, "ResultDesc": "Already processed"})
 
-                    # Get booking_id from query params
-                    booking_id = request.GET.get("booking_id")
-                    booking = None
-                    if booking_id:
-                        try:
-                            booking = Booking.objects.get(id=booking_id)
-                            booking.payment_status = "COMPLETED"
-                            booking.booking_status = "PAID"
-                            booking.paid_on = timezone.now()
-                            booking.save()
-                        except Booking.DoesNotExist:
-                            print(f"No booking found with id {booking_id}")
+            # ASYNC PROCESSING
+            process_mpesa_callback.delay(stk)
 
-                    WalletTransaction.objects.create(
-                        wallet=wallet,
-                        transaction_type="DEPOSIT",
-                        amount=amount,
-                        status="COMPLETED",
-                        mpesa_receipt_number=mpesa_receipt,
-                        description=f"M-Pesa payment for booking {booking_id}" if booking else "M-Pesa payment",
-                        booking=booking
-                    )
-
-                except User.DoesNotExist:
-                    print(f"No user found with phone {phone}")
-                except Wallet.DoesNotExist:
-                    print(f"No wallet found for user with phone {phone}")
+            logger.info(f"MPESA callback received: {checkout_id}")
 
             return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        except json.JSONDecodeError:
-            return JsonResponse({"ResultCode": 1, "ResultDesc": "Invalid JSON"}, status=400)
         except Exception as e:
-            print("Callback Error:", e)
-            return JsonResponse({"ResultCode": 1, "ResultDesc": str(e)}, status=500)
-    else:
-        return JsonResponse({"ResultCode": 1, "ResultDesc": "Only POST allowed"}, status=405)
+            logger.error(f"MPESA CALLBACK ERROR: {str(e)}")
+            return JsonResponse({"ResultCode": 0, "ResultDesc": "Error handled"})
+
+    return JsonResponse({"ResultCode": 1, "ResultDesc": "Only POST allowed"})

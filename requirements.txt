@@ -13,4 +13,5 @@ whitenoise==6.7.0
 psycopg2-binary==2.9.10
 Faker==37.5.3
 python-dotenv
-
+drf_spectacular
+Pillow

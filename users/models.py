@@ -25,11 +25,13 @@ class User(AbstractUser):
     ROLE_ADMIN = "ADMIN"
     ROLE_LANDLORD = "LANDLORD"
     ROLE_TENANT = "TENANT"
+    ROLE_AGENT = "AGENT"
 
     ROLE_CHOICES = [
         (ROLE_ADMIN, "Admin"),
         (ROLE_LANDLORD, "Landlord"),
         (ROLE_TENANT, "Tenant"),
+        (ROLE_AGENT, "Agent"),
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)

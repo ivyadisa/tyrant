@@ -45,6 +45,7 @@ class WalletTransaction(models.Model):
         ("COMMISSION_DEDUCTION", "Commission Deduction"),
         ("REFUND", "Refund"),
     ]
+
     STATUS_CHOICES = [
         ("PENDING", "Pending"),
         ("COMPLETED", "Completed"),
@@ -54,16 +55,22 @@ class WalletTransaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="transactions")
     transaction_type = models.CharField(max_length=30, choices=TRANSACTION_TYPES)
+
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    checkout_request_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    merchant_request_id = models.CharField(max_length=100, null=True, blank=True)
+    phone_number = models.CharField(max_length=20, null=True, blank=True)
+
     reference_id = models.UUIDField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+
     mpesa_receipt_number = models.CharField(max_length=50, null=True, blank=True)
     description = models.TextField(blank=True)
-    booking = models.ForeignKey(Booking, on_delete=models.SET_NULL, null=True, blank=True)  # Link to Booking
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.transaction_type} - {self.amount} KES"
+    booking = models.ForeignKey(Booking, on_delete=models.SET_NULL, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
