@@ -15,3 +15,5 @@ Faker==37.5.3
 python-dotenv
 drf_spectacular
 Pillow
+celery
+requests

@@ -17,6 +17,9 @@ class VerificationViewSet(viewsets.ModelViewSet):
     serializer_class = VerificationSerializer
     permission_classes = [IsAdminOrAssignedAgent]
 
+    def _is_admin(self, user):
+        return user.is_staff or getattr(user, "role", "") == "ADMIN"
+
     def get_queryset(self):
         qs = (
             Verification.objects
