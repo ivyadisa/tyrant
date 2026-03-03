@@ -7,7 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction
 from decimal import Decimal, InvalidOperation
 from .models import Wallet, WalletTransaction
-from .serializers import WalletSerializer, WalletTransactionSerializer
+from .serializers import WalletSerializer, WalletTransactionSerializer, PaymentRequestSerializer
 from .mpesa import stk_push
 from .tasks import process_mpesa_callback
 import json
@@ -115,6 +115,7 @@ class WalletWithdrawView(generics.CreateAPIView):
 
 class InitiatePaymentView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = PaymentRequestSerializer
 
     def post(self, request, *args, **kwargs):
         try:
@@ -146,10 +147,19 @@ class InitiatePaymentView(APIView):
 
             callback_url = request.build_absolute_uri("/api/wallet/mpesa/callback/")
 
-            response = stk_push(phone, amount, callback_url, booking_id)
+            try:
+                response = stk_push(phone, float(amount), callback_url, booking_id)
+            except TypeError as e:
+                response = stk_push(phone, str(amount), callback_url, booking_id)
 
             checkout_id = response.get("CheckoutRequestID")
             merchant_id = response.get("MerchantRequestID")
+
+            if not checkout_id:
+                return Response({
+                    "error": "STK push failed",
+                    "details": response
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             WalletTransaction.objects.create(
                 wallet=wallet,
@@ -164,7 +174,13 @@ class InitiatePaymentView(APIView):
 
             logger.info(f"STK push initiated: {checkout_id}")
 
-            return Response(response, status=status.HTTP_200_OK)
+            return Response({
+                "message": "STK push initiated successfully",
+                "checkout_request_id": checkout_id,
+                "merchant_request_id": merchant_id,
+                "amount": str(amount),
+                "phone": phone
+            }, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.error(f"STK Push Error: {str(e)}")
