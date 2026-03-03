@@ -34,6 +34,8 @@ class WalletDetailView(generics.RetrieveAPIView):
     def get_object(self):
         wallet, _ = Wallet.objects.get_or_create(user=self.request.user)
         return wallet
+        wallet, _ = Wallet.objects.get_or_create(user=self.request.user)
+        return wallet
 
 
 class WalletTransactionListView(generics.ListAPIView):
@@ -45,6 +47,7 @@ class WalletTransactionListView(generics.ListAPIView):
 
 
 class WalletDepositView(generics.CreateAPIView):
+    """Handle wallet deposits"""
     serializer_class = WalletTransactionSerializer
     permission_classes = [IsAuthenticated]
 
@@ -89,10 +92,19 @@ class WalletWithdrawView(generics.CreateAPIView):
                 raise ValueError("Amount must be greater than zero")
         except (TypeError, ValueError, InvalidOperation) as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+
+        try:
+            amount = Decimal(str(request.data.get("amount")))
+            if amount <= 0:
+                raise ValueError("Amount must be greater than zero")
+        except (TypeError, ValueError, InvalidOperation) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         if wallet.balance < amount:
             return Response({"error": "Insufficient funds"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Perform withdraw and transaction atomically
         with transaction.atomic():
             wallet.withdraw(amount)
             transaction_obj = WalletTransaction.objects.create(

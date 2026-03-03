@@ -11,6 +11,11 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'full_name', 'email', 'phone_number', 'national_id',
             'national_id_image', 'profile_picture', 'bio', 'role', 'status',
             'verification_status', 'verification_notes', 'verification_date',
+            'verified_by_admin', 'created_at', 'updated_at',
+            # new fields for landlord dashboard
+            'physical_address', 'proof_of_ownership', 'kra_pin',
+            'bank_name', 'bank_account_number', 'bank_account_name', 'bank_branch_code',
+            'terms_accepted'
             'verified_by_admin', 'created_at', 'updated_at', 'email_verified'
         ]
 
