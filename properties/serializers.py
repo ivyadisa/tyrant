@@ -1,10 +1,33 @@
 from rest_framework import serializers
-from .models import Apartment, Unit, Amenity, LeaseAgreement
+from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType
 
 class AmenitySerializer(serializers.ModelSerializer):
     class Meta:
         model = Amenity
         fields = ["id", "name", "icon_url"]
+
+
+class KeyAmenitySerializer(serializers.ModelSerializer):
+    amenity_type_display = serializers.CharField(source="get_amenity_type_display", read_only=True)
+
+    class Meta:
+        model = KeyAmenity
+        fields = ["id", "amenity_type", "amenity_type_display", "name", "latitude", "longitude"]
+
+
+class ApartmentAmenityDistanceSerializer(serializers.ModelSerializer):
+    amenity_type_display = serializers.CharField(source="get_amenity_type_display", read_only=True)
+
+    class Meta:
+        model = ApartmentAmenityDistance
+        fields = ["id", "amenity_type", "amenity_type_display", "distance_km", "nearest_name"]
+        read_only_fields = ["id"]
+
+
+class ApartmentAmenityDistanceCreateSerializer(serializers.Serializer):
+    amenity_type = serializers.ChoiceField(choices=KeyAmenityType.choices)
+    distance_km = serializers.DecimalField(max_digits=5, decimal_places=2)
+    nearest_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
 
 class LeaseAgreementSerializer(serializers.ModelSerializer):
@@ -56,13 +79,14 @@ class ApartmentSerializer(serializers.ModelSerializer):
     units = UnitSerializer(many=True, read_only=True)
     amenities = AmenitySerializer(many=True, read_only=True)
     lease_agreement = LeaseAgreementSerializer(read_only=True)
+    amenity_distances = ApartmentAmenityDistanceSerializer(many=True, read_only=True)
 
     class Meta:
         model = Apartment
         fields = [
             "id", "landlord", "name", "address", "latitude", "longitude",
             "overview_description", "exterior_image_url", "lease_agreement",
-            "rules_and_policies", "amenities", "units",
+            "rules_and_policies", "amenities", "units", "amenity_distances",
             "verification_status",
             "total_units", "occupied_units", "created_at", "updated_at"
         ]

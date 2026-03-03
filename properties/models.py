@@ -31,6 +31,53 @@ class Amenity(models.Model):
         return self.name
 
 
+class KeyAmenityType(models.TextChoices):
+    SCHOOL = "SCHOOL", "School"
+    MARKET = "MARKET", "Market"
+    HOSPITAL = "HOSPITAL", "Hospital"
+    ROAD = "ROAD", "Road"
+    BUS_STOP = "BUS_STOP", "Bus Stop"
+    PHARMACY = "PHARMACY", "Pharmacy"
+    BANK = "BANK", "Bank"
+    RESTAURANT = "RESTAURANT", "Restaurant"
+    PARK = "PARK", "Park"
+    GYM = "GYM", "Gym"
+    UNIVERSITY = "UNIVERSITY", "University"
+    SHOPPING_MALL = "SHOPPING_MALL", "Shopping Mall"
+
+
+class KeyAmenity(models.Model):
+    """Lookup table for key amenities near apartments."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    amenity_type = models.CharField(max_length=20, choices=KeyAmenityType.choices)
+    name = models.CharField(max_length=255)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+
+    class Meta:
+        unique_together = ("amenity_type", "name")
+        verbose_name_plural = "Key Amenities"
+
+    def __str__(self):
+        return f"{self.name} ({self.amenity_type})"
+
+
+class ApartmentAmenityDistance(models.Model):
+    """Stores distance from apartment to key amenities."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    apartment = models.ForeignKey('Apartment', on_delete=models.CASCADE, related_name="amenity_distances")
+    amenity_type = models.CharField(max_length=20, choices=KeyAmenityType.choices)
+    distance_km = models.DecimalField(max_digits=5, decimal_places=2, help_text="Distance in kilometers")
+    nearest_name = models.CharField(max_length=255, blank=True, help_text="Name of the nearest amenity of this type")
+
+    class Meta:
+        unique_together = ("apartment", "amenity_type")
+        ordering = ["amenity_type"]
+
+    def __str__(self):
+        return f"{self.apartment.name} - {self.amenity_type}: {self.distance_km}km"
+
+
 class LeaseAgreement(models.Model):
     """Stores lease agreement documents with version tracking and integrity verification."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
