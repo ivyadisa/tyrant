@@ -17,6 +17,9 @@ class VerificationViewSet(viewsets.ModelViewSet):
     serializer_class = VerificationSerializer
     permission_classes = [IsAdminOrAssignedAgent]
 
+    def _is_admin(self, user):
+        return user.is_staff or getattr(user, "role", "") == "ADMIN"
+
     def get_queryset(self):
         qs = (
             Verification.objects
@@ -25,20 +28,20 @@ class VerificationViewSet(viewsets.ModelViewSet):
         )
 
         user = self.request.user
-        if user.is_staff or getattr(user, "is_admin", False):
+        if self._is_admin(user):
             return qs
 
         return qs.filter(assigned_agent=user)
 
     # CREATE (admins only)
     def perform_create(self, serializer):
-        if not self.request.user.is_admin:
+        if not self._is_admin(self.request.user):
             raise PermissionDenied("Only admins can create verification tasks.")
         serializer.save()
 
     # UPDATE (admins only)
     def perform_update(self, serializer):
-        if not self.request.user.is_admin:
+        if not self._is_admin(self.request.user):
             raise PermissionDenied("Only admins can modify verification records.")
         serializer.save()
 
