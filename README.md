@@ -1,113 +1,5 @@
  # 🏠 Tyrant – Rental & Property Management System
- # 🏠 Tyrant – Rental & Property Management System
 
-**A comprehensive Django-based REST API for managing rental properties, bookings, and payments with role-based access control.**
-
-Tyrant is a backend rental and property management system that enables tenants to discover and book apartments while empowering landlords to list, manage, and monetize their properties. Built with Django REST Framework, it features secure authentication, wallet-based payments (M-Pesa), real-time occupancy tracking, and admin oversight.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [System Requirements](#system-requirements)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Project Structure](#project-structure)
-- [API Documentation](#api-documentation)
-- [Payment Integration](#payment-integration)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [License](#license)
-- [Support](#support)
-
----
-
-## Features
-
-### User Management
-- User registration with email OTP verification
--   Role-based access control (Tenant, Landlord, Admin)
--   User verification workflow with admin oversight
--   Secure password reset via email OTP
--   User profile management
-
-### Property Management
--   Complete apartment/unit CRUD operations
--   Apartment listing approval workflow (Admin verification)
--   Amenities and facility management
--   Real-time occupancy status tracking
--   Landlord filtering and property statistics
-
-### Bookings & Reservations
--   Create, view, and manage bookings
--   Booking confirmation workflow
--   Automatic unit status updates
--   Tenant and landlord booking history
-
-### Payment System
--   M-Pesa mobile money integration via payment aggregator
--   Secure payment processing with 10% platform commission
--   Automatic 90% landlord payment distribution
--   Wallet balance management and transaction history
--   Commission tracking and admin revenue analytics
-
-### Wallet & Transactions
--   User wallet balance management
--   Deposit and withdrawal operations
--   Transaction history with detailed logs
--   Bank account information storage
-
-### Admin Features
--   User suspension/unsuspension
--   Apartment approval/rejection workflow
--   Commission and revenue tracking
--   Analytics dashboard with key metrics
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Backend** | Python 3.10+, Django 4.0+ |
-| **API Framework** | Django REST Framework (DRF) |
-| **Database** | PostgreSQL 12+ |
-| **Authentication** | Token-based (DRF TokenAuth) |
-| **Payment** | M-Pesa via Payment Aggregator (Pesapal/Intasend/Flutterwave) |
-| **Deployment** | Docker, Heroku (Procfile included) |
-| **Email** | Django Mail Backend |
-
----
-
-##  System Requirements
-
-| Requirement | Version |
-|------------|---------|
-| **Python** | 3.10+ |
-| **PostgreSQL** | 12+ |
-| **RAM** | 2GB minimum |
-| **Disk Space** | 1GB minimum |
-| **OS** | Linux, macOS, Windows |
-
----
-
-## Prerequisites
-
-Before installation, ensure you have:
-
-- **Python 3.10+** installed and in PATH
-- **PostgreSQL 12+** installed and running
-- **pip** (Python package manager)
-- **Virtual environment support** (venv or virtualenv)
-- **Git** for cloning the repository
-- **Payment Aggregator Account** (Pesapal/Intasend/Flutterwave) for M-Pesa integration
-
----
 
 ##  Installation
 
@@ -115,6 +7,7 @@ Before installation, ensure you have:
 
 ```bash
 git clone https://github.com/flow-pie/tyrant.git
+```
 **A comprehensive Django-based REST API for managing rental properties, bookings, and payments with role-based access control.**
 
 Tyrant is a backend rental and property management system that enables tenants to discover and book apartments while empowering landlords to list, manage, and monetize their properties. Built with Django REST Framework, it features secure authentication, wallet-based payments (M-Pesa), real-time occupancy tracking, and admin oversight.
