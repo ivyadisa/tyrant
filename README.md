@@ -305,11 +305,13 @@ EMAIL_USE_TLS=True
 EMAIL_HOST_USER=email@gmail.com
 EMAIL_HOST_PASSWORD=your_email_password
 
-# Payment Aggregator (M-Pesa)
-PAYMENT_AGGREGATOR=pesapal  # or intasend, flutterwave
-PAYMENT_API_KEY=your_api_key
-PAYMENT_API_SECRET=your_api_secret
-PAYMENT_CALLBACK_URL=https://yourdomain.com/api/bookings/payment-webhook/
+# Payment Aggregator (M-Pesa Daraja)
+MPESA_ENVIRONMENT=sandbox
+MPESA_CONSUMER_KEY=your_consumer_key
+MPESA_CONSUMER_SECRET=your_consumer_secret
+MPESA_SHORTCODE=174379
+MPESA_PASSKEY=your_passkey
+MPESA_CALLBACK_URL=https://yourdomain.com/api/wallet/mpesa/callback/
 
 # Commission Settings
 PLATFORM_COMMISSION_PERCENTAGE=10  # 10% platform commission
@@ -414,12 +416,11 @@ tyrant/
 - `GET /api/bookings/{id}/payment-status/` - Check payment status
 
 ### Wallet Endpoints
-- `GET /api/wallet/balance/` - Get wallet balance
-- `POST /api/wallet/deposit/` - Deposit funds (M-Pesa)
+- `GET /api/wallet/` - Get wallet balance & transactions
+- `POST /api/wallet/pay/` - Initiate M-Pesa STK Push
+- `POST /api/wallet/mpesa/callback/` - M-Pesa payment callback
+- `POST /api/wallet/deposit/` - Manual deposit
 - `POST /api/wallet/withdraw/` - Request withdrawal
-- `GET /api/wallet/transactions/` - Transaction history
-- `POST /api/wallet/payout-request/` (Landlord) - Request payout
-- `GET /api/wallet/payouts/` - Payout history
 
 For complete API documentation, see `/api/docs/` (if Swagger/ReDoc enabled).
 
@@ -427,59 +428,90 @@ For complete API documentation, see `/api/docs/` (if Swagger/ReDoc enabled).
 
 ## Payment Integration
 
-### M-Pesa Payment Flow
+### M-Pesa STK Push (Direct Integration)
 
-1. **Tenant initiates payment:**
-   ```bash
-   POST /api/bookings/{id}/initiate-payment/
-   {
-     "phone_number": "+254712345678",
-     "amount": 50000  # Amount in cents
-   }
-   ```
+The system uses M-Pesa STK Push for mobile money payments. Payments are processed through Safaricom's Daraja API.
 
-2. **M-Pesa prompt sent to tenant's phone**
+#### Environment Variables
 
-3. **Tenant enters M-Pesa PIN**
+Add these to your `.env` file:
 
-4. **Payment aggregator sends webhook:**
-   ```
-   POST /api/bookings/payment-webhook/
-   {
-     "booking_id": 123,
-     "status": "completed",
-     "amount": 50000,
-     "transaction_id": "tx_123456"
-   }
-   ```
+```env
+# M-Pesa Daraja API (Sandbox/Production)
+MPESA_ENVIRONMENT=sandbox
+MPESA_CONSUMER_KEY=your_consumer_key
+MPESA_CONSUMER_SECRET=your_consumer_secret
+MPESA_SHORTCODE=174379
+MPESA_PASSKEY=your_passkey
+MPESA_CALLBACK_URL=https://yourdomain.com/api/wallet/mpesa/callback/
+```
 
-5. **Automatic fund distribution:**
-   - Platform keeps: 10% (5,000)
-   - Landlord receives: 90% (45,000)
+#### Payment Flow
 
-6. **Webhook response:**
-   ```json
-   {
-     "booking_id": 123,
-     "payment_status": "completed",
-     "landlord_amount": 45000,
-     "platform_commission": 5000
-   }
-   ```
+1. **Initiate STK Push**
+2. **Customer receives prompt on phone**
+3. **Customer enters M-Pesa PIN**
+4. **Callback processes result**
+5. **Wallet credited/booking confirmed**
 
-### Setting Up Payment Aggregator
+#### Testing M-Pesa Payments
 
-**For Pesapal:**
-1. Create account at [pesapal.com](https://pesapal.com)
-2. Get API Key and Secret
-3. Update `.env` with credentials
-4. Test using their sandbox environment
+**1. Start the server:**
+```bash
+python manage.py runserver
+```
 
-**For Intasend:**
-1. Create account at [intasend.com](https://intasend.com)
-2. Get API Key and Secret
-3. Update `.env` with credentials
-4. Use their testing mode first
+**2. Get authentication token:**
+```bash
+curl -X POST http://127.0.0.1:8000/api/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{"email": "your@email.com", "password": "yourpassword"}'
+```
+
+**3. Initiate payment:**
+```bash
+curl -X POST http://127.0.0.1:8000/api/wallet/pay/ \
+  -H "Authorization: Token YOUR_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone": "0712345678",
+    "amount": 100,
+    "booking_id": "BK001"
+  }'
+```
+
+**4. Complete payment on phone:**
+- You'll receive an STK popup on your phone
+- Enter your M-Pesa PIN to confirm
+
+**5. M-Pesa will call your callback URL:**
+- Sandbox: Use ngrok to expose localhost
+- Production: Ensure `MPESA_CALLBACK_URL` points to your live endpoint
+
+**6. Verify wallet balance:**
+```bash
+curl http://127.0.0.1:8000/api/wallet/ \
+  -H "Authorization: Token YOUR_AUTH_TOKEN"
+```
+
+#### Testing with ngrok (Local Development)
+
+For local testing, expose localhost with ngrok:
+
+```bash
+ngrok http 8000
+# Update MPESA_CALLBACK_URL in .env to your ngrok URL
+```
+
+#### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/wallet/` | GET | Get wallet balance & transactions |
+| `/api/wallet/pay/` | POST | Initiate STK Push payment |
+| `/api/wallet/mpesa/callback/` | POST | M-Pesa callback URL |
+| `/api/wallet/deposit/` | POST | Manual deposit |
+| `/api/wallet/withdraw/` | POST | Request withdrawal |
 
 ---
 
