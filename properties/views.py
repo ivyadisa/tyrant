@@ -2,15 +2,31 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
+import math
 
 from verification.models import Verification
-from .models import Apartment, Unit, Amenity, LeaseAgreement
-from .serializers import ApartmentSerializer, UnitSerializer, AmenitySerializer, LeaseAgreementSerializer, LeaseAgreementUploadSerializer
+from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType
+from .serializers import (
+    ApartmentSerializer, UnitSerializer, AmenitySerializer, LeaseAgreementSerializer,
+    LeaseAgreementUploadSerializer, KeyAmenitySerializer, ApartmentAmenityDistanceSerializer,
+    ApartmentAmenityDistanceCreateSerializer
+)
 from django.shortcuts import get_object_or_404
 from rest_framework.routers import DefaultRouter
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Max, Min
 from rest_framework.permissions import IsAuthenticated
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -53,9 +69,112 @@ class ApartmentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = Apartment.objects.all().prefetch_related("amenity_distances", "units")
+
+        distance_filter = self.request.query_params.get("max_distance")
+        amenity_filter = self.request.query_params.get("amenity_type")
+
+        if distance_filter and amenity_filter:
+            try:
+                max_dist = float(distance_filter)
+                qs = qs.filter(
+                    amenity_distances__amenity_type=amenity_filter,
+                    amenity_distances__distance_km__lte=max_dist
+                ).distinct()
+            except ValueError:
+                pass
+
         if getattr(user, "role", "").upper() == "LANDLORD":
-            return Apartment.objects.filter(landlord=user)
-        return Apartment.objects.all()
+            return qs.filter(landlord=user)
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="search")
+    def search(self, request):
+        queryset = self.get_queryset()
+
+        name = request.query_params.get("name")
+        if name:
+            queryset = queryset.filter(name__icontains=name)
+
+        verification_status = request.query_params.get("verification_status")
+        if verification_status:
+            queryset = queryset.filter(verification_status=verification_status)
+
+        min_price = request.query_params.get("min_price")
+        max_price = request.query_params.get("max_price")
+        if min_price or max_price:
+            queryset = queryset.filter(units__price_per_month__isnull=False)
+            if min_price:
+                queryset = queryset.filter(units__price_per_month__gte=min_price)
+            if max_price:
+                queryset = queryset.filter(units__price_per_month__lte=max_price)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="nearby")
+    def nearby(self, request):
+        try:
+            lat = float(request.query_params.get("latitude"))
+            lon = float(request.query_params.get("longitude"))
+            radius_km = float(request.query_params.get("radius", 10))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Valid latitude, longitude, and optional radius (km) required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        apartments = Apartment.objects.filter(
+            latitude__isnull=False,
+            longitude__isnull=False
+        )
+
+        if getattr(request.user, "role", "").upper() == "LANDLORD":
+            apartments = apartments.filter(landlord=request.user)
+
+        results = []
+        for apt in apartments:
+            try:
+                dist = haversine_distance(lat, lon, float(apt.latitude), float(apt.longitude))
+                if dist <= radius_km:
+                    results.append((dist, apt))
+            except (TypeError, ValueError):
+                pass
+
+        results.sort(key=lambda x: x[0])
+        serializer = self.get_serializer([apt for _, apt in results], many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="amenity-distances")
+    def list_amenity_distances(self, request, pk=None):
+        apartment = self.get_object()
+        distances = apartment.amenity_distances.all()
+        serializer = ApartmentAmenityDistanceSerializer(distances, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="set-amenity-distances")
+    def set_amenity_distances(self, request, pk=None):
+        apartment = self.get_object()
+
+        if apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = ApartmentAmenityDistanceCreateSerializer(data=request.data, many=True)
+        if serializer.is_valid():
+            with transaction.atomic():
+                ApartmentAmenityDistance.objects.filter(apartment=apartment).delete()
+                for item in serializer.validated_data:
+                    ApartmentAmenityDistance.objects.create(
+                        apartment=apartment,
+                        amenity_type=item["amenity_type"],
+                        distance_km=item["distance_km"],
+                        nearest_name=item.get("nearest_name", "")
+                    )
+            return Response(
+                ApartmentAmenityDistanceSerializer(apartment.amenity_distances.all(), many=True).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):
         if not self.request.user.is_staff:
@@ -169,3 +288,15 @@ class LeaseAgreementViewSet(viewsets.ModelViewSet):
             "verified": True
         }
         return Response(data)
+
+
+class KeyAmenityViewSet(viewsets.ModelViewSet):
+    queryset = KeyAmenity.objects.all()
+    serializer_class = KeyAmenitySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        amenity_type = self.request.query_params.get("amenity_type")
+        if amenity_type:
+            return KeyAmenity.objects.filter(amenity_type=amenity_type)
+        return KeyAmenity.objects.all()
