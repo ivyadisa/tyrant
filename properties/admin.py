@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Apartment, Unit, Amenity
+from .models import Apartment, Unit, Amenity, KeyAmenity, ApartmentAmenityDistance
 
 try:
     from .signals import Reservation
@@ -10,6 +10,20 @@ except Exception:
 @admin.register(Amenity)
 class AmenityAdmin(admin.ModelAdmin):
     list_display = ("name",)
+
+
+@admin.register(KeyAmenity)
+class KeyAmenityAdmin(admin.ModelAdmin):
+    list_display = ("name", "amenity_type", "latitude", "longitude")
+    list_filter = ("amenity_type",)
+    search_fields = ("name",)
+
+
+@admin.register(ApartmentAmenityDistance)
+class ApartmentAmenityDistanceAdmin(admin.ModelAdmin):
+    list_display = ("apartment", "amenity_type", "distance_km", "nearest_name")
+    list_filter = ("amenity_type",)
+    search_fields = ("apartment__name",)
 
 
 @admin.register(Apartment)

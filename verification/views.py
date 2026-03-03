@@ -28,10 +28,13 @@ class VerificationViewSet(viewsets.ModelViewSet):
         )
 
         user = self.request.user
-        if self._is_admin(user):
+        if user.is_staff or getattr(user, "role", "") == "ADMIN":
             return qs
 
         return qs.filter(assigned_agent=user)
+
+    def _is_admin(self, user):
+        return user.is_staff or getattr(user, "role", "") == "ADMIN"
 
     # CREATE (admins only)
     def perform_create(self, serializer):
