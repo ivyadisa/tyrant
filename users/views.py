@@ -4,6 +4,8 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+import random
 
 from django.utils import timezone
 
@@ -15,6 +17,9 @@ from .serializers import (
     AdminVerificationSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    VerifyEmailSerializer,
+    ResendOtpSerializer,
+    VerifyStatusSerializer,
     LandlordDashboardSerializer,
     LandlordDocumentUploadSerializer,
 )
@@ -88,6 +93,7 @@ class UserListView(generics.ListAPIView):
 # =====================================================
 class CustomLoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    serializer_class = LoginSerializer
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -333,6 +339,10 @@ def admin_dashboard_analytics(request):
 # =====================================================
 # PASSWORD RESET
 # =====================================================
+@extend_schema(
+    request=PasswordResetRequestSerializer,
+    responses={200: {"description": "OTP sent successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def request_password_reset(request):
@@ -349,6 +359,10 @@ def request_password_reset(request):
     return Response(serializer.errors, status=400)
 
 
+@extend_schema(
+    request=PasswordResetConfirmSerializer,
+    responses={200: {"description": "Password reset successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def confirm_password_reset(request):
@@ -381,6 +395,10 @@ def confirm_password_reset(request):
 # =====================================================
 # EMAIL VERIFICATION
 # =====================================================
+@extend_schema(
+    request=VerifyEmailSerializer,
+    responses={200: {"description": "Email verified successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def verify_email(request):
@@ -416,6 +434,10 @@ def verify_email(request):
 # =====================================================
 # RESEND OTP
 # =====================================================
+@extend_schema(
+    request=ResendOtpSerializer,
+    responses={200: {"description": "OTP resent successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def resend_otp(request):
@@ -436,6 +458,10 @@ def resend_otp(request):
 # =====================================================
 # VERIFY STATUS
 # =====================================================
+@extend_schema(
+    parameters=[OpenApiParameter(name='email', description='User email', type=str, required=True)],
+    responses={200: {"description": "Email verification status"}}
+)
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def verify_status(request):

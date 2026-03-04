@@ -11,11 +11,8 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'full_name', 'email', 'phone_number', 'national_id',
             'national_id_image', 'profile_picture', 'bio', 'role', 'status',
             'verification_status', 'verification_notes', 'verification_date',
-            'verified_by_admin', 'created_at', 'updated_at',
-            # new fields for landlord dashboard
-            'physical_address', 'proof_of_ownership', 'kra_pin',
-            'bank_name', 'bank_account_number', 'bank_account_name', 'bank_branch_code',
-            'terms_accepted', 'created_at', 'updated_at', 'email_verified'
+            'verified_by_admin', 'created_at', 'updated_at', 'email_verified',
+            'email_otp', 'otp_expiry'
         ]
 
 
@@ -40,9 +37,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         role = validated_data.get('role')
 
         if role == 'LANDLORD':
-            if not validated_data.get('national_id') or not validated_data.get('national_id_image'):
+            if not validated_data.get('national_id'):
                 raise serializers.ValidationError(
-                    {"error": "Landlords must provide both National ID and ID image."}
+                    {"error": "Landlords must provide both National ID"}
                 )
 
         user = User.objects.create(
@@ -100,6 +97,19 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     otp = serializers.CharField(max_length=6, required=True)
     new_password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
 
+
+class VerifyEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(max_length=6, required=True)
+
+
+class ResendOtpSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+
+class VerifyStatusSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
 # --- New serializer for landlord dashboard ---
 class LandlordDashboardSerializer(UserSerializer):
     verified_by_admin = serializers.SerializerMethodField()
@@ -115,7 +125,7 @@ class LandlordDashboardSerializer(UserSerializer):
 
 # --- Landlord document upload ---
 class LandlordDocumentUploadSerializer(serializers.ModelSerializer):
-    national_id_image = serializers.ImageField(required=True)
+    national_id_image = serializers.ImageField(required=False)
     proof_of_ownership = serializers.ImageField(required=False)
     kra_pin = serializers.ImageField(required=False)
 
