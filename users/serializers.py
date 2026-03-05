@@ -39,7 +39,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         if role == 'LANDLORD':
             if not validated_data.get('national_id'):
                 raise serializers.ValidationError(
-                    {"error": "Landlords must provide both National ID"}
+                    {"error": "Landlords must provide their National ID"}
                 )
 
         user = User.objects.create(
