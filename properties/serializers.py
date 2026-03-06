@@ -76,6 +76,7 @@ class UnitSerializer(serializers.ModelSerializer):
 
 
 class ApartmentSerializer(serializers.ModelSerializer):
+
     units = UnitSerializer(many=True, read_only=True)
     amenities = AmenitySerializer(many=True, read_only=True)
     lease_agreement = LeaseAgreementSerializer(read_only=True)
@@ -84,10 +85,48 @@ class ApartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Apartment
         fields = [
-            "id", "landlord", "name", "address", "latitude", "longitude",
-            "overview_description", "exterior_image_url", "lease_agreement",
-            "rules_and_policies", "amenities", "units", "amenity_distances",
+            "id",
+            "landlord",
+            "name",
+            "address",
+            "latitude",
+            "longitude",
+            "overview_description",
+            "exterior_image_url",
+            "lease_agreement",
+            "rules_and_policies",
+            "amenities",
+            "units",
+            "amenity_distances",
             "verification_status",
-            "total_units", "occupied_units", "created_at", "updated_at"
+            "is_approved",
+            "total_units",
+            "occupied_units",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ["landlord", "total_units", "occupied_units", "created_at", "updated_at"]
+
+        read_only_fields = [
+            "landlord",
+            "verification_status",
+            "is_approved",
+            "total_units",
+            "occupied_units",
+            "created_at",
+            "updated_at",
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        request = self.context.get("request")
+
+        if request:
+            user = request.user
+
+            # Hide verification details from tenants
+            if getattr(user, "role", "").upper() not in ["ADMIN", "LANDLORD"]:
+                data.pop("verification_status", None)
+                data.pop("is_approved", None)
+
+        return data
