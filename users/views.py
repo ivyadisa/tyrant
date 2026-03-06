@@ -8,6 +8,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExampl
 import random
 
 from django.utils import timezone
+from datetime import timedelta
 
 from .models import User
 from .serializers import (
@@ -421,6 +422,7 @@ def verify_email(request):
     user.email_verified = True
     user.email_otp = None
     user.otp_expiry = None
+    user.email_otp_used = True
     user.save()
 
     token, _ = Token.objects.get_or_create(user=user)
@@ -447,6 +449,20 @@ def resend_otp(request):
         if user.email_verified:
             return Response({"message": "Email already verified."})
 
+        now = timezone.now()
+        window_start = user.otp_request_window
+        if not window_start or now > window_start + timedelta(hours=1):
+            user.otp_request_count = 1
+            user.otp_request_window = now
+        else:
+            if user.otp_request_count >= 3:
+                return Response(
+                    {"error": "Too many OTP requests. Please try again later."},
+                    status=429
+                )
+            user.otp_request_count += 1
+
+        user.save()
         send_otp_email(user, subject="Your New OTP Code")
 
         return Response({"success": "OTP resent successfully."})
