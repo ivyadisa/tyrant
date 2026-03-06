@@ -72,6 +72,26 @@ INSTALLED_APPS = [
 ]
 
 # --------------------------------------------------
+# DRF SPECTACULAR SETTINGS
+# --------------------------------------------------
+SPECTACULAR_SETTINGS = {
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SECURITY': [{
+        'tokenAuth': []
+    }],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'tokenAuth': {
+                'type': 'apiKey',
+                'in': 'header',
+                'name': 'Authorization',
+                'description': 'Token-based authentication. Format: "Token <your-token>"'
+            }
+        }
+    }
+}
+
+# --------------------------------------------------
 # MIDDLEWARE
 # --------------------------------------------------
 MIDDLEWARE = [
@@ -183,7 +203,7 @@ AUTH_USER_MODEL = "users.User"
 # --------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        "users.authentication.FlexibleTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

@@ -4,8 +4,11 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+import random
 
 from django.utils import timezone
+from datetime import timedelta
 
 from .models import User
 from .serializers import (
@@ -15,6 +18,9 @@ from .serializers import (
     AdminVerificationSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    VerifyEmailSerializer,
+    ResendOtpSerializer,
+    VerifyStatusSerializer,
     LandlordDashboardSerializer,
     LandlordDocumentUploadSerializer,
 )
@@ -88,6 +94,7 @@ class UserListView(generics.ListAPIView):
 # =====================================================
 class CustomLoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    serializer_class = LoginSerializer
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -333,6 +340,10 @@ def admin_dashboard_analytics(request):
 # =====================================================
 # PASSWORD RESET
 # =====================================================
+@extend_schema(
+    request=PasswordResetRequestSerializer,
+    responses={200: {"description": "OTP sent successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def request_password_reset(request):
@@ -349,6 +360,10 @@ def request_password_reset(request):
     return Response(serializer.errors, status=400)
 
 
+@extend_schema(
+    request=PasswordResetConfirmSerializer,
+    responses={200: {"description": "Password reset successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def confirm_password_reset(request):
@@ -381,6 +396,10 @@ def confirm_password_reset(request):
 # =====================================================
 # EMAIL VERIFICATION
 # =====================================================
+@extend_schema(
+    request=VerifyEmailSerializer,
+    responses={200: {"description": "Email verified successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def verify_email(request):
@@ -403,6 +422,7 @@ def verify_email(request):
     user.email_verified = True
     user.email_otp = None
     user.otp_expiry = None
+    user.email_otp_used = True
     user.save()
 
     token, _ = Token.objects.get_or_create(user=user)
@@ -416,6 +436,10 @@ def verify_email(request):
 # =====================================================
 # RESEND OTP
 # =====================================================
+@extend_schema(
+    request=ResendOtpSerializer,
+    responses={200: {"description": "OTP resent successfully"}}
+)
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
 def resend_otp(request):
@@ -425,6 +449,20 @@ def resend_otp(request):
         if user.email_verified:
             return Response({"message": "Email already verified."})
 
+        now = timezone.now()
+        window_start = user.otp_request_window
+        if not window_start or now > window_start + timedelta(hours=1):
+            user.otp_request_count = 1
+            user.otp_request_window = now
+        else:
+            if user.otp_request_count >= 3:
+                return Response(
+                    {"error": "Too many OTP requests. Please try again later."},
+                    status=429
+                )
+            user.otp_request_count += 1
+
+        user.save()
         send_otp_email(user, subject="Your New OTP Code")
 
         return Response({"success": "OTP resent successfully."})
@@ -436,6 +474,10 @@ def resend_otp(request):
 # =====================================================
 # VERIFY STATUS
 # =====================================================
+@extend_schema(
+    parameters=[OpenApiParameter(name='email', description='User email', type=str, required=True)],
+    responses={200: {"description": "Email verification status"}}
+)
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def verify_status(request):

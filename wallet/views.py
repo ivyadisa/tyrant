@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction
+from django.conf import settings
 from decimal import Decimal, InvalidOperation
 from .models import Wallet, WalletTransaction
 from .serializers import WalletSerializer, WalletTransactionSerializer, PaymentRequestSerializer
@@ -157,7 +158,7 @@ class InitiatePaymentView(APIView):
                     "checkout_request_id": existing_txn.checkout_request_id
                 }, status=status.HTTP_200_OK)
 
-            callback_url = request.build_absolute_uri("/api/wallet/mpesa/callback/")
+            callback_url = settings.MPESA_CALLBACK_URL
 
             try:
                 response = stk_push(phone, float(amount), callback_url, booking_id)

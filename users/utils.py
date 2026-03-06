@@ -17,6 +17,7 @@ def send_otp_email(user, subject="Verify Your Email"):
 
     user.email_otp = otp
     user.otp_expiry = timezone.now() + timedelta(minutes=10)
+    user.email_otp_used = False
     user.save()
 
     send_mail(
@@ -30,8 +31,11 @@ def send_otp_email(user, subject="Verify Your Email"):
 
 def verify_user_otp(user, otp):
     """
-    Validates OTP and expiry.
+    Validates OTP, expiry, and prevents reuse.
     """
+    if user.email_otp_used:
+        return False, "OTP already used."
+
     if user.email_otp != otp:
         return False, "Invalid OTP."
 

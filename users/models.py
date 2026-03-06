@@ -80,6 +80,10 @@ class User(AbstractUser):
 
     email_otp = models.CharField(max_length=6, blank=True, null=True)
     otp_expiry = models.DateTimeField(blank=True, null=True)
+    email_otp_used = models.BooleanField(default=False)
+
+    otp_request_count = models.PositiveIntegerField(default=0)
+    otp_request_window = models.DateTimeField(blank=True, null=True)
 
     # ================= TIMESTAMPS =================
     created_at = models.DateTimeField(auto_now_add=True)
