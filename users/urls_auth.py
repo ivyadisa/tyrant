@@ -4,7 +4,8 @@ from wallet.urls import urlpatterns
 from .views import (
     RegisterView, CustomLoginView,
     request_password_reset, confirm_password_reset, verify_status,
-    verify_email, resend_otp
+    verify_email, resend_otp, NewsletterSubscribeView, NewsletterUnsubscribeView,
+    ContactInquiryView, ContactInquiryListView
 )
 
 urlpatterns = [
@@ -17,4 +18,12 @@ urlpatterns = [
     path('verify-email/', verify_email, name='verify-email'),
     path('resend-otp/', resend_otp, name='resend-otp'),
     path('verify-status/', verify_status, name='verify-status'),
+
+    # Newsletter
+    path('newsletter/subscribe', NewsletterSubscribeView.as_view(), name='newsletter-subscribe'),
+    path('newsletter/unsubscribe/<str:email>', NewsletterUnsubscribeView.as_view(), name='newsletter-unsubscribe'),
+
+    # Contact
+    path('contact', ContactInquiryView.as_view(), name='contact-create'),
+    path('contact/list', ContactInquiryListView.as_view(), name='contact-list'),
 ]
