@@ -121,7 +121,9 @@ class Apartment(models.Model):
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     overview_description = models.TextField(blank=True)
+    exterior_image = models.ImageField(upload_to='apartments/exterior/', blank=True, null=True)
     exterior_image_url = models.URLField(blank=True)
+    virtual_tour_url = models.URLField(blank=True, help_text="360 tour URL")
     lease_agreement = models.ForeignKey(LeaseAgreement, on_delete=models.SET_NULL, null=True, blank=True, related_name="apartments_using", help_text="Latest lease agreement document")
     rules_and_policies = models.TextField(blank=True)
     amenities = models.ManyToManyField(Amenity, blank=True, related_name="apartments")
@@ -192,6 +194,58 @@ class Unit(models.Model):
     def __str__(self):
         return f"{self.apartment.name} - {self.unit_number_or_id} ({self.status})"
 
-    # ✅ Added for sitemap
     def get_absolute_url(self):
         return reverse("properties:unit-detail", args=[str(self.id)])
+
+
+class Review(models.Model):
+    """Reviews and ratings for apartments."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    apartment = models.ForeignKey(Apartment, on_delete=models.CASCADE, related_name="reviews")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reviews")
+    rating = models.PositiveIntegerField(choices=[(i, i) for i in range(1, 6)], help_text="1-5 stars")
+    comment = models.TextField(blank=True)
+    is_verified_tenant = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("apartment", "user")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Review for {self.apartment.name} by {self.user.username}"
+
+
+class Tour(models.Model):
+    """Tour scheduling for apartments."""
+    TOUR_STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("CONFIRMED", "Confirmed"),
+        ("COMPLETED", "Completed"),
+        ("CANCELLED", "Cancelled"),
+    ]
+
+    TOUR_TYPE_CHOICES = [
+        ("IN_PERSON", "In Person"),
+        ("VIDEO_CALL", "Video Call"),
+        ("SELF_GUIDED", "Self Guided"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    apartment = models.ForeignKey(Apartment, on_delete=models.CASCADE, related_name="tours")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="tours")
+    tour_type = models.CharField(max_length=20, choices=TOUR_TYPE_CHOICES, default="IN_PERSON")
+    scheduled_date = models.DateField()
+    scheduled_time = models.TimeField()
+    status = models.CharField(max_length=20, choices=TOUR_STATUS_CHOICES, default="PENDING")
+    notes = models.TextField(blank=True)
+    contact_phone = models.CharField(max_length=15, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-scheduled_date", "-scheduled_time"]
+
+    def __str__(self):
+        return f"Tour for {self.apartment.name} on {self.scheduled_date}"
