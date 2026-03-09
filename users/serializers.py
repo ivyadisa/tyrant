@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import authenticate
-from .models import User
+from .models import User, NewsletterSubscription, ContactInquiry
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -30,26 +30,35 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Passwords do not match."})
+        
+        role = attrs.get('role')
+        
+        allowed_roles = [User.ROLE_TENANT, User.ROLE_LANDLORD]
+        if role not in allowed_roles:
+            raise serializers.ValidationError(
+                {"role": "Invalid role. Only TENANT and LANDLORD roles can self-register."}
+            )
+        
+        if role == User.ROLE_LANDLORD:
+            if not attrs.get('national_id'):
+                raise serializers.ValidationError(
+                    {"national_id": "Landlords must provide their National ID"}
+                )
+        
         return attrs
 
     def create(self, validated_data):
         validated_data.pop('password2')
-        role = validated_data.get('role')
-
-        if role == 'LANDLORD':
-            if not validated_data.get('national_id'):
-                raise serializers.ValidationError(
-                    {"error": "Landlords must provide their National ID"}
-                )
-
+        
         user = User.objects.create(
             username=validated_data['username'],
             email=validated_data['email'],
             full_name=validated_data.get('full_name', ''),
-            phone_number=validated_data['phone_number'],
+            phone_number=validated_data.get('phone_number', ''),
             national_id=validated_data.get('national_id'),
             national_id_image=validated_data.get('national_id_image'),
-            role=role,
+            role=validated_data.get('role', User.ROLE_TENANT),
+            verification_status=User.VERIF_PENDING,
         )
         user.set_password(validated_data['password'])
         user.save()
@@ -136,3 +145,17 @@ class LandlordDocumentUploadSerializer(serializers.ModelSerializer):
             'proof_of_ownership',
             'kra_pin'
         ]
+
+
+class NewsletterSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NewsletterSubscription
+        fields = ['email', 'is_active', 'subscribed_at']
+        read_only_fields = ['is_active', 'subscribed_at']
+
+
+class ContactInquirySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactInquiry
+        fields = ['id', 'name', 'email', 'phone', 'subject', 'message', 'is_resolved', 'created_at']
+        read_only_fields = ['is_resolved', 'created_at']

@@ -5,11 +5,11 @@ from rest_framework.response import Response
 import math
 
 from verification.models import Verification
-from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType
+from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Review, Tour
 from .serializers import (
     ApartmentSerializer, UnitSerializer, AmenitySerializer, LeaseAgreementSerializer,
     LeaseAgreementUploadSerializer, KeyAmenitySerializer, ApartmentAmenityDistanceSerializer,
-    ApartmentAmenityDistanceCreateSerializer
+    ApartmentAmenityDistanceCreateSerializer, ReviewSerializer, TourSerializer
 )
 from django.shortcuts import get_object_or_404
 from rest_framework.routers import DefaultRouter
@@ -109,8 +109,44 @@ class ApartmentViewSet(viewsets.ModelViewSet):
             if max_price:
                 queryset = queryset.filter(units__price_per_month__lte=max_price)
 
+        beds = request.query_params.get("beds")
+        if beds:
+            try:
+                beds = int(beds)
+                queryset = queryset.filter(units__type__icontains=str(beds))
+            except ValueError:
+                pass
+
+        property_type = request.query_params.get("property_type")
+        if property_type:
+            queryset = queryset.filter(units__type__icontains=property_type.lower())
+
+        location = request.query_params.get("location")
+        if location:
+            queryset = queryset.filter(address__icontains=location)
+
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="featured")
+    def featured(self, request):
+        featured_apps = Apartment.objects.filter(
+            is_approved=True,
+            verification_status="VERIFIED"
+        ).prefetch_related("amenity_distances", "units").order_by("-created_at")[:6]
+        serializer = self.get_serializer(featured_apps, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="popular-locations")
+    def popular_locations(self, request):
+        from django.db.models import Count
+        locations = (
+            Apartment.objects.filter(is_approved=True)
+            .values("name")
+            .annotate(property_count=Count("id"))
+            .order_by("-property_count")[:6]
+        )
+        return Response(locations)
 
     @action(detail=False, methods=["get"], url_path="nearby")
     def nearby(self, request):
@@ -175,6 +211,41 @@ class ApartmentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="upload-image")
+    def upload_image(self, request, pk=None):
+        apartment = self.get_object()
+        
+        if apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        
+        image = request.FILES.get("image")
+        if not image:
+            return Response({"error": "No image provided"}, status=400)
+        
+        apartment.exterior_image = image
+        apartment.save(update_fields=["exterior_image"])
+        
+        return Response({
+            "message": "Image uploaded successfully",
+            "image_url": apartment.exterior_image.url
+        })
+
+    @action(detail=True, methods=["post"], url_path="set-virtual-tour")
+    def set_virtual_tour(self, request, pk=None):
+        apartment = self.get_object()
+        
+        if apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        
+        tour_url = request.data.get("virtual_tour_url")
+        if not tour_url:
+            return Response({"error": "virtual_tour_url is required"}, status=400)
+        
+        apartment.virtual_tour_url = tour_url
+        apartment.save(update_fields=["virtual_tour_url"])
+        
+        return Response({"message": "Virtual tour URL set successfully"})
 
     def perform_create(self, serializer):
         if not self.request.user.is_staff:
@@ -300,3 +371,52 @@ class KeyAmenityViewSet(viewsets.ModelViewSet):
         if amenity_type:
             return KeyAmenity.objects.filter(amenity_type=amenity_type)
         return KeyAmenity.objects.all()
+
+
+class ReviewViewSet(viewsets.ModelViewSet):
+    queryset = Review.objects.all()
+    serializer_class = ReviewSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Review.objects.select_related("apartment", "user").all()
+        apartment_id = self.request.query_params.get("apartment")
+        if apartment_id:
+            queryset = queryset.filter(apartment_id=apartment_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class TourViewSet(viewsets.ModelViewSet):
+    queryset = Tour.objects.all()
+    serializer_class = TourSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = Tour.objects.select_related("apartment", "user").all()
+        
+        if getattr(user, "role", "").upper() == "LANDLORD":
+            queryset = queryset.filter(apartment__landlord=user)
+        else:
+            queryset = queryset.filter(user=user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=["patch"], url_path="update-status")
+    def update_status(self, request, pk=None):
+        tour = self.get_object()
+        new_status = request.data.get("status")
+        if new_status not in dict(Tour.TOUR_STATUS_CHOICES).keys():
+            return Response({"detail": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if getattr(request.user, "role", "").upper() != "LANDLORD" and request.user != tour.user:
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        
+        tour.status = new_status
+        tour.save()
+        return Response(TourSerializer(tour).data)
