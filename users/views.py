@@ -5,12 +5,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+from django.core.mail import send_mail
 import random
 
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import User
+from .models import User, NewsletterSubscription, ContactInquiry
 from .serializers import (
     RegisterSerializer,
     UserSerializer,
@@ -23,6 +24,8 @@ from .serializers import (
     VerifyStatusSerializer,
     LandlordDashboardSerializer,
     LandlordDocumentUploadSerializer,
+    NewsletterSubscriptionSerializer,
+    ContactInquirySerializer,
 )
 
 from .permissions import (
@@ -237,18 +240,79 @@ def admin_reject_user(request, user_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsVerifiedLandlord])
 def landlord_dashboard(request):
-    serializer = LandlordDashboardSerializer(request.user)
+    from properties.models import Apartment, Unit
+    from wallet.models import Wallet
+    from bookings.models import Booking
+    
+    user = request.user
+    apartments = Apartment.objects.filter(landlord=user)
+    total_units = Unit.objects.filter(apartment__landlord=user).count()
+    occupied_units = Unit.objects.filter(apartment__landlord=user, status="OCCUPIED").count()
+    
+    pending_bookings = Booking.objects.filter(
+        apartment__landlord=user,
+        booking_status="PENDING"
+    ).count()
+    
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    
+    serializer = LandlordDashboardSerializer(user)
     return Response({
-        "message": f"Welcome {request.user.username}",
+        "message": f"Welcome {user.username}",
         "profile": serializer.data,
+        "stats": {
+            "total_apartments": apartments.count(),
+            "total_units": total_units,
+            "occupied_units": occupied_units,
+            "vacant_units": total_units - occupied_units,
+            "occupancy_rate": round((occupied_units / total_units * 100) if total_units > 0 else 0, 1),
+            "pending_bookings": pending_bookings,
+            "wallet_balance": str(wallet.balance),
+        }
     })
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsVerifiedTenant])
 def tenant_dashboard(request):
+    from bookings.models import Booking
+    from wallet.models import Wallet
+    
+    user = request.user
+    
+    active_bookings = Booking.objects.filter(
+        tenant=user,
+        booking_status__in=["CONFIRMED", "PAID"]
+    ).count()
+    
+    pending_bookings = Booking.objects.filter(
+        tenant=user,
+        booking_status="PENDING"
+    ).count()
+    
+    past_bookings = Booking.objects.filter(
+        tenant=user,
+        booking_status__in=["COMPLETED", "CANCELLED"]
+    ).count()
+    
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    
     return Response({
-        "message": f"Welcome {request.user.username}"
+        "message": f"Welcome {user.username}",
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "phone_number": user.phone_number,
+            "role": user.role,
+            "verification_status": user.verification_status,
+        },
+        "stats": {
+            "active_bookings": active_bookings,
+            "pending_bookings": pending_bookings,
+            "past_bookings": past_bookings,
+            "wallet_balance": str(wallet.balance),
+        }
     })
 
 
@@ -486,3 +550,64 @@ def verify_status(request):
         return Response({"email_verified": user.email_verified})
     except User.DoesNotExist:
         return Response({"error": "User not found."}, status=404)
+
+
+# =====================================================
+# NEWSLETTER SUBSCRIPTION
+# =====================================================
+class NewsletterSubscribeView(generics.CreateAPIView):
+    queryset = NewsletterSubscription.objects.all()
+    serializer_class = NewsletterSubscriptionSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        email = request.data.get("email")
+        if not email:
+            return Response({"error": "Email is required"}, status=400)
+        
+        subscription, created = NewsletterSubscription.objects.get_or_create(
+            email=email,
+            defaults={"is_active": True}
+        )
+        
+        if not created and not subscription.is_active:
+            subscription.is_active = True
+            subscription.unsubscribed_at = None
+            subscription.save()
+            return Response({"message": "Successfully re-subscribed to newsletter"})
+        
+        return Response({"message": "Successfully subscribed to newsletter"}, status=201)
+
+
+class NewsletterUnsubscribeView(generics.UpdateAPIView):
+    queryset = NewsletterSubscription.objects.all()
+    serializer_class = NewsletterSubscriptionSerializer
+    permission_classes = [permissions.AllowAny]
+    lookup_field = "email"
+
+    def update(self, request, *args, **kwargs):
+        try:
+            subscription = NewsletterSubscription.objects.get(email=kwargs["email"])
+            subscription.is_active = False
+            subscription.save()
+            return Response({"message": "Successfully unsubscribed from newsletter"})
+        except NewsletterSubscription.DoesNotExist:
+            return Response({"error": "Email not found"}, status=404)
+
+
+# =====================================================
+# CONTACT INQUIRY
+# =====================================================
+class ContactInquiryView(generics.CreateAPIView):
+    queryset = ContactInquiry.objects.all()
+    serializer_class = ContactInquirySerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class ContactInquiryListView(generics.ListAPIView):
+    queryset = ContactInquiry.objects.all()
+    serializer_class = ContactInquirySerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return ContactInquiry.objects.filter(is_resolved=False).order_by("-created_at")
