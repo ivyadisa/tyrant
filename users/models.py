@@ -5,7 +5,7 @@ from django.db import models
 
 class User(AbstractUser):
     """
-    Custom user model with roles, verification, and OTP support.
+    Custom user model with roles, verification, OTP, and landlord-specific fields.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -15,11 +15,29 @@ class User(AbstractUser):
     full_name = models.CharField(max_length=100, blank=True)
     phone_number = models.CharField(max_length=15, blank=True)
     national_id = models.CharField(max_length=20, null=True, blank=True)
+    physical_address = models.CharField(max_length=255, blank=True, null=True)
+    proof_of_ownership = models.ImageField(
+        upload_to="uploads/proof_of_ownership/",
+        null=True,
+        blank=True
+    )
+    kra_pin = models.ImageField(
+        upload_to="uploads/kra_pins/",
+        null=True,
+        blank=True
+    )
 
     bio = models.TextField(null=True, blank=True)
-
     profile_picture = models.ImageField(upload_to="uploads/profile_pics/", null=True, blank=True)
     national_id_image = models.ImageField(upload_to="uploads/national_ids/", null=True, blank=True)
+
+    # ================= BANK DETAILS =================
+    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    bank_account_number = models.CharField(max_length=30, blank=True, null=True)
+    bank_account_name = models.CharField(max_length=100, blank=True, null=True)
+    bank_branch_code = models.CharField(max_length=20, blank=True, null=True)
+
+    terms_accepted = models.BooleanField(default=False)
 
     # ================= ROLES =================
     ROLE_ADMIN = "ADMIN"
@@ -77,7 +95,6 @@ class User(AbstractUser):
 
     # ================= EMAIL VERIFICATION =================
     email_verified = models.BooleanField(default=False)
-
     email_otp = models.CharField(max_length=6, blank=True, null=True)
     otp_expiry = models.DateTimeField(blank=True, null=True)
 

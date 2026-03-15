@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType
+from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Lease, Payment, MaintenanceRequest, LeaseDocument
+ 
 
 class AmenitySerializer(serializers.ModelSerializer):
     class Meta:
@@ -130,3 +131,33 @@ class ApartmentSerializer(serializers.ModelSerializer):
                 data.pop("is_approved", None)
 
         return data
+
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = ["id", "amount", "date_paid", "status"]
+
+class MaintenanceRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MaintenanceRequest
+        fields = ["id", "title", "description", "status", "created_at"]
+
+class LeaseDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeaseDocument
+        fields = ["id", "name", "file", "uploaded_at"]
+
+class LeaseSerializer(serializers.ModelSerializer):
+    payments = PaymentSerializer(many=True, read_only=True)
+    maintenance_requests = MaintenanceRequestSerializer(many=True, read_only=True)
+    documents = LeaseDocumentSerializer(many=True, read_only=True)
+    unit_number = serializers.CharField(source="unit.unit_number_or_id", read_only=True)
+    apartment_name = serializers.CharField(source="unit.apartment.name", read_only=True)
+
+    class Meta:
+        model = Lease
+        fields = [
+            "id", "tenant", "unit_number", "apartment_name",
+            "start_date", "end_date", "rent_amount", "is_active",
+            "payments", "maintenance_requests", "documents"
+        ]

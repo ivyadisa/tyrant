@@ -38,16 +38,13 @@ if ENVIRONMENT == "production":
     CSRF_COOKIE_SECURE = True
 else:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-    CSRF_TRUSTED_ORIGINS = [
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-    ]
+    CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000", "http://localhost:8000"]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 
 # --------------------------------------------------
-# APPLICATIONS
+# INSTALLED APPS
 # --------------------------------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -61,6 +58,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
+    "drf_spectacular",
 
     # Local apps
     "users",
@@ -68,7 +66,6 @@ INSTALLED_APPS = [
     "bookings",
     "wallet",
     "verification",
-    "drf_spectacular",
 ]
 
 # --------------------------------------------------
@@ -95,6 +92,7 @@ if ENVIRONMENT == "production":
     CORS_ALLOW_CREDENTIALS = True
 else:
     CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True
 
 # --------------------------------------------------
 # ROOT URL
@@ -127,9 +125,7 @@ WSGI_APPLICATION = "tyrent_backend.wsgi.application"
 # --------------------------------------------------
 if ENVIRONMENT == "production":
     DATABASES = {
-        "default": dj_database_url.config(
-            default=os.getenv("DATABASE_URL")
-        )
+        "default": dj_database_url.config(default=os.getenv("DATABASE_URL"))
     }
 else:
     DATABASES = {
@@ -144,8 +140,10 @@ else:
     }
 
 # --------------------------------------------------
-# PASSWORD VALIDATORS
+# AUTHENTICATION & PASSWORD VALIDATORS
 # --------------------------------------------------
+AUTH_USER_MODEL = "users.User"
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -162,21 +160,13 @@ USE_I18N = True
 USE_TZ = True
 
 # --------------------------------------------------
-# STATIC FILES
+# STATIC & MEDIA FILES
 # --------------------------------------------------
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# --------------------------------------------------
-# MEDIA FILES
-# --------------------------------------------------
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
-
-# --------------------------------------------------
-# CUSTOM USER MODEL
-# --------------------------------------------------
-AUTH_USER_MODEL = "users.User"
 
 # --------------------------------------------------
 # DJANGO REST FRAMEWORK
@@ -188,18 +178,14 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema'
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 # --------------------------------------------------
-# EMAIL CONFIGURATION (FOR OTP)
+# EMAIL CONFIGURATION (OTP)
 # --------------------------------------------------
-
-# For Development (prints OTP in terminal)
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-
-# For Production (real email sending)
 else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST")
@@ -210,23 +196,28 @@ else:
 
 DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
 
+OTP_EXPIRATION_MINUTES = 10
+
 # --------------------------------------------------
-# OTP SETTINGS
+# MPESA SETTINGS
 # --------------------------------------------------
-OTP_EXPIRATION_MINUTES = 10  
+MPESA_CONSUMER_KEY = config("MPESA_CONSUMER_KEY")
+MPESA_CONSUMER_SECRET = config("MPESA_CONSUMER_SECRET")
+MPESA_SHORTCODE = config("MPESA_SHORTCODE")
+MPESA_PASSKEY = config("MPESA_PASSKEY")
+MPESA_CALLBACK_URL = config("MPESA_CALLBACK_URL")
 
-MPESA_CONSUMER_KEY = config('MPESA_CONSUMER_KEY')
-MPESA_CONSUMER_SECRET = config('MPESA_CONSUMER_SECRET')
-MPESA_SHORTCODE = config('MPESA_SHORTCODE')
-MPESA_PASSKEY = config('MPESA_PASSKEY')
-MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL')
-
-
+# --------------------------------------------------
+# CELERY SETTINGS
+# --------------------------------------------------
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
 
+# --------------------------------------------------
+# CACHES
+# --------------------------------------------------
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
@@ -234,21 +225,24 @@ CACHES = {
     }
 }
 
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': 'mpesa.log',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "mpesa.log",
         },
     },
-    'loggers': {
-        'payments': {
-            'handlers': ['file'],
-            'level': 'INFO',
-            'propagate': False,
+    "loggers": {
+        "payments": {
+            "handlers": ["file"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }

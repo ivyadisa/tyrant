@@ -4,6 +4,10 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+import random
+from django.core.mail import send_mail
+from properties.models import Lease, Payment, MaintenanceRequest, LeaseDocument
+from properties.serializers import LeaseSerializer
 
 from django.utils import timezone
 
@@ -95,18 +99,28 @@ class CustomLoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data["user"]
 
+            #  Check email verification
             if not user.email_verified:
                 return Response(
-                    {"error": "Please verify your email before logging in."},
-                    status=403,
+                    {"error": "Please verify your email first."},
+                    status=403
                 )
 
+            #  Check admin verification
+            if user.verification_status != User.VERIF_VERIFIED:
+                return Response(
+                    {"error": "Your account is pending admin verification."},
+                    status=403
+                )
+
+            #  Check if account is suspended
             if user.status == User.STATUS_SUSPENDED:
                 return Response(
                     {"error": "Your account is suspended."},
-                    status=403,
+                    status=403
                 )
 
+            #  Generate authentication token
             token, _ = Token.objects.get_or_create(user=user)
 
             return Response({
@@ -117,10 +131,10 @@ class CustomLoginView(APIView):
                 "role": user.role,
                 "status": user.status,
                 "verification_status": user.verification_status,
+                "email_verified": user.email_verified
             })
 
         return Response(serializer.errors, status=400)
-
 
 # =====================================================
 # VIEW PROFILE
@@ -240,8 +254,14 @@ def landlord_dashboard(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsVerifiedTenant])
 def tenant_dashboard(request):
+    tenant = request.user
+    # Get all active leases
+    active_leases = Lease.objects.filter(tenant=tenant, is_active=True)
+    serializer = LeaseSerializer(active_leases, many=True)
+
     return Response({
-        "message": f"Welcome {request.user.username}"
+        "message": f"Welcome {tenant.username}",
+        "current_leases": serializer.data
     })
 
 

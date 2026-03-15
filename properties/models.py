@@ -4,6 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.urls import reverse
 from django.core.validators import FileExtensionValidator
+from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
@@ -313,3 +314,50 @@ class Unit(models.Model):
 
     def get_absolute_url(self):
         return reverse("properties:unit-detail", args=[str(self.id)])
+
+# Tenant Lease
+class Lease(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(User, on_delete=models.CASCADE, related_name="leases")
+    unit = models.ForeignKey("Unit", on_delete=models.CASCADE, related_name="leases")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    rent_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.tenant.username} - {self.unit.unit_number_or_id}"
+
+# Payment for Lease
+class Payment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lease = models.ForeignKey(Lease, on_delete=models.CASCADE, related_name="payments")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    date_paid = models.DateField(default=timezone.now)
+    status = models.CharField(max_length=20, choices=[("PAID","Paid"),("PENDING","Pending")], default="PENDING")
+
+    def __str__(self):
+        return f"{self.lease} - {self.amount}"
+
+# Maintenance Request for a Lease
+class MaintenanceRequest(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lease = models.ForeignKey(Lease, on_delete=models.CASCADE, related_name="maintenance_requests")
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=[("OPEN","Open"),("IN_PROGRESS","In Progress"),("RESOLVED","Resolved")], default="OPEN")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.title} - {self.status}"
+
+# Documents for a Lease
+class LeaseDocument(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lease = models.ForeignKey(Lease, on_delete=models.CASCADE, related_name="documents")
+    file = models.FileField(upload_to="tenant_documents/")
+    name = models.CharField(max_length=255)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
