@@ -38,34 +38,58 @@ if ENVIRONMENT == "production":
     CSRF_COOKIE_SECURE = True
 else:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-    CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000", "http://localhost:8000"]
+    CSRF_TRUSTED_ORIGINS = [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 
 # --------------------------------------------------
-# INSTALLED APPS
+# APPLICATIONS
 # --------------------------------------------------
 INSTALLED_APPS = [
-    "users",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
-    "django.contrib.sessions",  # ✅ REQUIRED
+    "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
     # Third-party
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
-    "drf_spectacular",
 
     # Local apps
+    "users",
     "properties",
     "bookings",
     "wallet",
     "verification",
+    "drf_spectacular",
 ]
+
+# --------------------------------------------------
+# DRF SPECTACULAR SETTINGS
+# --------------------------------------------------
+SPECTACULAR_SETTINGS = {
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SECURITY': [{
+        'tokenAuth': []
+    }],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'tokenAuth': {
+                'type': 'apiKey',
+                'in': 'header',
+                'name': 'Authorization',
+                'description': 'Token-based authentication. Format: "Token <your-token>"'
+            }
+        }
+    }
+}
 
 # --------------------------------------------------
 # MIDDLEWARE
@@ -73,15 +97,11 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
-
-    "django.contrib.sessions.middleware.SessionMiddleware",  # ✅ REQUIRED
     "django.middleware.common.CommonMiddleware",
-
-    "django.middleware.csrf.CsrfViewMiddleware",  # ✅ REQUIRED
-    "django.contrib.auth.middleware.AuthenticationMiddleware",  # ✅ REQUIRED
-
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -95,7 +115,6 @@ if ENVIRONMENT == "production":
     CORS_ALLOW_CREDENTIALS = True
 else:
     CORS_ALLOW_ALL_ORIGINS = True
-    CORS_ALLOW_CREDENTIALS = True
 
 # --------------------------------------------------
 # ROOT URL
@@ -128,47 +147,24 @@ WSGI_APPLICATION = "tyrent_backend.wsgi.application"
 # --------------------------------------------------
 if ENVIRONMENT == "production":
     DATABASES = {
-        "default": dj_database_url.config(default=os.getenv("DATABASE_URL"))
+        "default": dj_database_url.config(
+            default=os.getenv("DATABASE_URL")
+        )
     }
 else:
     DATABASES = {
         "default": {
             "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.postgresql"),
-            "NAME": os.getenv("DB_NAME", "tyrent_db1"),
-            "USER": os.getenv("DB_USER", "neondb_owner"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "your_password_here"),
-            "HOST": os.getenv("DB_HOST", ""),
+            "NAME": os.getenv("DB_NAME", "tyrent_db"),
+            "USER": os.getenv("DB_USER", "postgres"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
+            "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
-            "OPTIONS": {
-                "options": "-c search_path=tyrent_schema,public"
-            },
         }
     }
 
 # --------------------------------------------------
-# AUTH
-# --------------------------------------------------
-AUTH_USER_MODEL = "users.User"
-
-AUTHENTICATION_BACKENDS = [
-    "django.contrib.auth.backends.ModelBackend",  # ✅ REQUIRED
-]
-
-# --------------------------------------------------
-# REST FRAMEWORK (SESSION AUTH)
-# --------------------------------------------------
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",  # ✅ SESSION AUTH
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-}
-
-# --------------------------------------------------
-# PASSWORD VALIDATION
+# PASSWORD VALIDATORS
 # --------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -186,33 +182,44 @@ USE_I18N = True
 USE_TZ = True
 
 # --------------------------------------------------
-# STATIC & MEDIA
+# STATIC FILES
 # --------------------------------------------------
 STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
+# --------------------------------------------------
+# MEDIA FILES
+# --------------------------------------------------
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # --------------------------------------------------
-# CSRF SETTINGS (VERY IMPORTANT)
+# CUSTOM USER MODEL
 # --------------------------------------------------
-CSRF_TRUSTED_ORIGINS = [
-    "http://127.0.0.1:3000",
-    "http://localhost:3000",
-]
-
-SESSION_COOKIE_SAMESITE = "Lax"
-CSRF_COOKIE_SAMESITE = "Lax"
-
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
+AUTH_USER_MODEL = "users.User"
 
 # --------------------------------------------------
-# EMAIL
+# DJANGO REST FRAMEWORK
 # --------------------------------------------------
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "users.authentication.FlexibleTokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema'
+}
+
+# --------------------------------------------------
+# EMAIL CONFIGURATION (FOR OTP)
+# --------------------------------------------------
+
+# For Development (prints OTP in terminal)
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# For Production (real email sending)
 else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST")
@@ -223,28 +230,23 @@ else:
 
 DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
 
-OTP_EXPIRATION_MINUTES = 10
+# --------------------------------------------------
+# OTP SETTINGS
+# --------------------------------------------------
+OTP_EXPIRATION_MINUTES = 10  
 
-# --------------------------------------------------
-# MPESA
-# --------------------------------------------------
-MPESA_CONSUMER_KEY = config("MPESA_CONSUMER_KEY")
-MPESA_CONSUMER_SECRET = config("MPESA_CONSUMER_SECRET")
-MPESA_SHORTCODE = config("MPESA_SHORTCODE")
-MPESA_PASSKEY = config("MPESA_PASSKEY")
-MPESA_CALLBACK_URL = config("MPESA_CALLBACK_URL")
+MPESA_CONSUMER_KEY = config('MPESA_CONSUMER_KEY')
+MPESA_CONSUMER_SECRET = config('MPESA_CONSUMER_SECRET')
+MPESA_SHORTCODE = config('MPESA_SHORTCODE')
+MPESA_PASSKEY = config('MPESA_PASSKEY')
+MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL')
 
-# --------------------------------------------------
-# CELERY
-# --------------------------------------------------
+
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
 
-# --------------------------------------------------
-# CACHES
-# --------------------------------------------------
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
@@ -252,10 +254,21 @@ CACHES = {
     }
 }
 
-# --------------------------------------------------
-# LOGGING
-# --------------------------------------------------
 LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'mpesa.log',
+        },
+    },
+    'loggers': {
+        'payments': {
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
 }
