@@ -47,21 +47,20 @@ else:
 # INSTALLED APPS
 # --------------------------------------------------
 INSTALLED_APPS = [
+    "users",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
-    "django.contrib.sessions",
+    "django.contrib.sessions",  # ✅ REQUIRED
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
     # Third-party
     "rest_framework",
-    "rest_framework.authtoken",
     "corsheaders",
     "drf_spectacular",
 
     # Local apps
-    "users",
     "properties",
     "bookings",
     "wallet",
@@ -74,11 +73,15 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
+
     "corsheaders.middleware.CorsMiddleware",
+
+    "django.contrib.sessions.middleware.SessionMiddleware",  # ✅ REQUIRED
     "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
+
+    "django.middleware.csrf.CsrfViewMiddleware",  # ✅ REQUIRED
+    "django.contrib.auth.middleware.AuthenticationMiddleware",  # ✅ REQUIRED
+
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -131,19 +134,42 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.postgresql"),
-            "NAME": os.getenv("DB_NAME", "tyrent_db"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
-            "HOST": os.getenv("DB_HOST", "localhost"),
+            "NAME": os.getenv("DB_NAME", "tyrent_db1"),
+            "USER": os.getenv("DB_USER", "neondb_owner"),
+            "PASSWORD": os.getenv("DB_PASSWORD", "your_password_here"),
+            "HOST": os.getenv("DB_HOST", ""),
             "PORT": os.getenv("DB_PORT", "5432"),
+            "OPTIONS": {
+                "options": "-c search_path=tyrent_schema,public"
+            },
         }
     }
 
 # --------------------------------------------------
-# AUTHENTICATION & PASSWORD VALIDATORS
+# AUTH
 # --------------------------------------------------
 AUTH_USER_MODEL = "users.User"
 
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",  # ✅ REQUIRED
+]
+
+# --------------------------------------------------
+# REST FRAMEWORK (SESSION AUTH)
+# --------------------------------------------------
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",  # ✅ SESSION AUTH
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+# --------------------------------------------------
+# PASSWORD VALIDATION
+# --------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -160,7 +186,7 @@ USE_I18N = True
 USE_TZ = True
 
 # --------------------------------------------------
-# STATIC & MEDIA FILES
+# STATIC & MEDIA
 # --------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -169,20 +195,21 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # --------------------------------------------------
-# DJANGO REST FRAMEWORK
+# CSRF SETTINGS (VERY IMPORTANT)
 # --------------------------------------------------
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-}
+CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+]
+
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
 
 # --------------------------------------------------
-# EMAIL CONFIGURATION (OTP)
+# EMAIL
 # --------------------------------------------------
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
@@ -199,7 +226,7 @@ DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
 OTP_EXPIRATION_MINUTES = 10
 
 # --------------------------------------------------
-# MPESA SETTINGS
+# MPESA
 # --------------------------------------------------
 MPESA_CONSUMER_KEY = config("MPESA_CONSUMER_KEY")
 MPESA_CONSUMER_SECRET = config("MPESA_CONSUMER_SECRET")
@@ -208,7 +235,7 @@ MPESA_PASSKEY = config("MPESA_PASSKEY")
 MPESA_CALLBACK_URL = config("MPESA_CALLBACK_URL")
 
 # --------------------------------------------------
-# CELERY SETTINGS
+# CELERY
 # --------------------------------------------------
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -231,18 +258,4 @@ CACHES = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {
-        "file": {
-            "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": BASE_DIR / "mpesa.log",
-        },
-    },
-    "loggers": {
-        "payments": {
-            "handlers": ["file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-    },
 }

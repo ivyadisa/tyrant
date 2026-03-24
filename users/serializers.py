@@ -12,7 +12,6 @@ class UserSerializer(serializers.ModelSerializer):
             'national_id_image', 'profile_picture', 'bio', 'role', 'status',
             'verification_status', 'verification_notes', 'verification_date',
             'verified_by_admin', 'created_at', 'updated_at',
-            # new fields for landlord dashboard
             'physical_address', 'proof_of_ownership', 'kra_pin',
             'bank_name', 'bank_account_number', 'bank_account_name', 'bank_branch_code',
             'terms_accepted', 'created_at', 'updated_at', 'email_verified'
@@ -31,34 +30,36 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        # Ensure passwords match
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Passwords do not match."})
         return attrs
 
     def create(self, validated_data):
+        # Remove password2 as it's only for validation
         validated_data.pop('password2')
-        role = validated_data.get('role')
+        role = validated_data.get('role', User.ROLE_TENANT)
 
-        if role == 'LANDLORD':
+        # Landlord-specific validation
+        if role == User.ROLE_LANDLORD:
             if not validated_data.get('national_id') or not validated_data.get('national_id_image'):
                 raise serializers.ValidationError(
                     {"error": "Landlords must provide both National ID and ID image."}
                 )
 
-        user = User.objects.create(
-            username=validated_data['username'],
+        # Use custom manager to create user and hash password
+        user = User.objects.create_user(
             email=validated_data['email'],
+            password=validated_data['password'],
+            username=validated_data.get('username', ''),
             full_name=validated_data.get('full_name', ''),
-            phone_number=validated_data['phone_number'],
+            phone_number=validated_data.get('phone_number', ''),
             national_id=validated_data.get('national_id'),
             national_id_image=validated_data.get('national_id_image'),
-            role=role,
+            role=role
         )
-        user.set_password(validated_data['password'])
-        user.save()
+
         return user
-
-
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, required=True)
