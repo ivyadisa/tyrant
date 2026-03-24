@@ -66,22 +66,45 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=True)
+    login = serializers.CharField(required=False, allow_blank=False)
+    email = serializers.EmailField(required=False)
+    username = serializers.CharField(required=False, allow_blank=False)
     password = serializers.CharField(write_only=True, required=True)
 
     def validate(self, attrs):
+        login = attrs.get('login')
         email = attrs.get('email')
+        username = attrs.get('username')
         password = attrs.get('password')
 
-        try:
-            user_obj = User.objects.get(email=email)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Invalid email or password")
+        identifier = login or email or username
+        if not identifier:
+            raise serializers.ValidationError(
+                "Provide login, email, or username with your password."
+            )
+
+        user_obj = None
+
+        if email:
+            user_obj = User.objects.filter(email=email).first()
+
+        if not user_obj and username:
+            user_obj = User.objects.filter(username=username).first()
+
+        # If only login is provided, decide whether it is email or username.
+        if not user_obj and login:
+            if "@" in login:
+                user_obj = User.objects.filter(email=login).first()
+            else:
+                user_obj = User.objects.filter(username=login).first()
+
+        if not user_obj:
+            raise serializers.ValidationError("Invalid credentials")
 
         user = authenticate(username=user_obj.username, password=password)
 
         if not user:
-            raise serializers.ValidationError("Invalid email or password")
+            raise serializers.ValidationError("Invalid credentials")
 
         if not user.is_active:
             raise serializers.ValidationError("This account is inactive")

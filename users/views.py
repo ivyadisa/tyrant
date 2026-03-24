@@ -105,6 +105,20 @@ class CustomLoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data["user"]
 
+            if user.is_superuser and user.role != User.ROLE_ADMIN:
+                user.role = User.ROLE_ADMIN
+                user.email_verified = True
+                user.status = User.STATUS_ACTIVE
+                user.verification_status = User.VERIF_VERIFIED
+                user.save(
+                    update_fields=[
+                        "role",
+                        "email_verified",
+                        "status",
+                        "verification_status",
+                    ]
+                )
+
             if not user.email_verified:
                 return Response(
                     {"error": "Please verify your email before logging in."},
