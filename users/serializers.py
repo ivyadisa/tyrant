@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import authenticate
-from .models import User
+from .models import User, NewsletterSubscription, ContactInquiry
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -11,10 +11,8 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'full_name', 'email', 'phone_number', 'national_id',
             'national_id_image', 'profile_picture', 'bio', 'role', 'status',
             'verification_status', 'verification_notes', 'verification_date',
-            'verified_by_admin', 'created_at', 'updated_at',
-            'physical_address', 'proof_of_ownership', 'kra_pin',
-            'bank_name', 'bank_account_number', 'bank_account_name', 'bank_branch_code',
-            'terms_accepted', 'created_at', 'updated_at', 'email_verified'
+            'verified_by_admin', 'created_at', 'updated_at', 'email_verified',
+            'email_otp', 'otp_expiry'
         ]
 
 
@@ -30,36 +28,43 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        # Ensure passwords match
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Passwords do not match."})
+        
+        role = attrs.get('role')
+        
+        allowed_roles = [User.ROLE_TENANT, User.ROLE_LANDLORD]
+        if role not in allowed_roles:
+            raise serializers.ValidationError(
+                {"role": "Invalid role. Only TENANT and LANDLORD roles can self-register."}
+            )
+        
+        if role == User.ROLE_LANDLORD:
+            if not attrs.get('national_id'):
+                raise serializers.ValidationError(
+                    {"national_id": "Landlords must provide their National ID"}
+                )
+        
         return attrs
 
     def create(self, validated_data):
-        # Remove password2 as it's only for validation
         validated_data.pop('password2')
-        role = validated_data.get('role', User.ROLE_TENANT)
-
-        # Landlord-specific validation
-        if role == User.ROLE_LANDLORD:
-            if not validated_data.get('national_id') or not validated_data.get('national_id_image'):
-                raise serializers.ValidationError(
-                    {"error": "Landlords must provide both National ID and ID image."}
-                )
-
-        # Use custom manager to create user and hash password
-        user = User.objects.create_user(
+        
+        user = User.objects.create(
+            username=validated_data['username'],
             email=validated_data['email'],
-            password=validated_data['password'],
-            username=validated_data.get('username', ''),
             full_name=validated_data.get('full_name', ''),
             phone_number=validated_data.get('phone_number', ''),
             national_id=validated_data.get('national_id'),
             national_id_image=validated_data.get('national_id_image'),
-            role=role
+            role=validated_data.get('role', User.ROLE_TENANT),
+            verification_status=User.VERIF_PENDING,
         )
-
+        user.set_password(validated_data['password'])
+        user.save()
         return user
+
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, required=True)
@@ -101,6 +106,19 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     otp = serializers.CharField(max_length=6, required=True)
     new_password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
 
+
+class VerifyEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(max_length=6, required=True)
+
+
+class ResendOtpSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+
+class VerifyStatusSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
 # --- New serializer for landlord dashboard ---
 class LandlordDashboardSerializer(UserSerializer):
     verified_by_admin = serializers.SerializerMethodField()
@@ -116,7 +134,7 @@ class LandlordDashboardSerializer(UserSerializer):
 
 # --- Landlord document upload ---
 class LandlordDocumentUploadSerializer(serializers.ModelSerializer):
-    national_id_image = serializers.ImageField(required=True)
+    national_id_image = serializers.ImageField(required=False)
     proof_of_ownership = serializers.ImageField(required=False)
     kra_pin = serializers.ImageField(required=False)
 
@@ -127,3 +145,17 @@ class LandlordDocumentUploadSerializer(serializers.ModelSerializer):
             'proof_of_ownership',
             'kra_pin'
         ]
+
+
+class NewsletterSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NewsletterSubscription
+        fields = ['email', 'is_active', 'subscribed_at']
+        read_only_fields = ['is_active', 'subscribed_at']
+
+
+class ContactInquirySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactInquiry
+        fields = ['id', 'name', 'email', 'phone', 'subject', 'message', 'is_resolved', 'created_at']
+        read_only_fields = ['is_resolved', 'created_at']
