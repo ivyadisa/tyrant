@@ -257,19 +257,22 @@ def landlord_dashboard(request):
     from properties.models import Apartment, Unit
     from wallet.models import Wallet
     from bookings.models import Booking
-    
+
     user = request.user
     apartments = Apartment.objects.filter(landlord=user)
     total_units = Unit.objects.filter(apartment__landlord=user).count()
     occupied_units = Unit.objects.filter(apartment__landlord=user, status="OCCUPIED").count()
-    
+
     pending_bookings = Booking.objects.filter(
-        apartment__landlord=user,
-        booking_status="PENDING"
+        landlord=user,
+        booking_status="PENDING",
     ).count()
-    
-    wallet, _ = Wallet.objects.get_or_create(user=user)
-    
+
+    wallet, _ = Wallet.objects.get_or_create(
+        user=user,
+        wallet_type="LANDLORD",
+    )
+
     serializer = LandlordDashboardSerializer(user)
     return Response({
         "message": f"Welcome {user.username}",
@@ -284,7 +287,6 @@ def landlord_dashboard(request):
             "wallet_balance": str(wallet.balance),
         }
     })
-
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsVerifiedTenant])

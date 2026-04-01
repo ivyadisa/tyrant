@@ -117,6 +117,66 @@ class AdminVerificationSerializer(serializers.Serializer):
     verification_notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class AdminLandlordVerificationSerializer(serializers.ModelSerializer):
+    national_id_image_url = serializers.SerializerMethodField()
+    proof_of_ownership_url = serializers.SerializerMethodField()
+    kra_pin_url = serializers.SerializerMethodField()
+    profile_picture_url = serializers.SerializerMethodField()
+    verified_by_admin = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "username",
+            "full_name",
+            "email",
+            "phone_number",
+            "role",
+            "status",
+            "verification_status",
+            "verification_notes",
+            "verification_date",
+            "email_verified",
+            "national_id",
+            "national_id_image_url",
+            "proof_of_ownership_url",
+            "kra_pin_url",
+            "profile_picture_url",
+            "verified_by_admin",
+            "created_at",
+            "updated_at",
+        ]
+
+    def _build_file_url(self, file_field):
+        if not file_field:
+            return None
+        request = self.context.get("request")
+        file_url = file_field.url
+        return request.build_absolute_uri(file_url) if request else file_url
+
+    def get_national_id_image_url(self, obj):
+        return self._build_file_url(obj.national_id_image)
+
+    def get_proof_of_ownership_url(self, obj):
+        # Field may not exist in current schema on some deployments.
+        file_field = getattr(obj, "proof_of_ownership", None)
+        return self._build_file_url(file_field)
+
+    def get_kra_pin_url(self, obj):
+        # Field may not exist in current schema on some deployments.
+        file_field = getattr(obj, "kra_pin", None)
+        return self._build_file_url(file_field)
+
+    def get_profile_picture_url(self, obj):
+        return self._build_file_url(obj.profile_picture)
+
+    def get_verified_by_admin(self, obj):
+        if obj.verified_by_admin:
+            return obj.verified_by_admin.full_name or obj.verified_by_admin.email
+        return None
+
+
 # -------------------------
 # Password Reset / OTP
 # -------------------------
