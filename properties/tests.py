@@ -1,8 +1,10 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 
-from properties.models import Apartment, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Unit
+from properties.models import Apartment, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Unit, Amenity
+from properties.serializers import ApartmentSerializer
 
 User = get_user_model()
 
@@ -164,6 +166,110 @@ class KeyAmenityDistanceAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 2)
+
+
+class ApartmentSerializerAmenityWriteTestCase(TestCase):
+    def setUp(self):
+        self.landlord = User.objects.create_user(
+            email="amenity-landlord@test.com",
+            password="password",
+            username="amenity_landlord_test",
+            role=User.ROLE_LANDLORD,
+        )
+
+    def test_create_apartment_with_amenity_ids(self):
+        wifi = Amenity.objects.create(name="WiFi")
+        parking = Amenity.objects.create(name="Parking")
+
+        serializer = ApartmentSerializer(
+            data={
+                "name": "Amenity Apartment",
+                "amenity_ids": [str(wifi.id), str(parking.id)],
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        apartment = serializer.save(landlord=self.landlord)
+
+        self.assertEqual(apartment.amenities.count(), 2)
+        self.assertSetEqual(
+            set(apartment.amenities.values_list("id", flat=True)),
+            {wifi.id, parking.id},
+        )
+
+    def test_update_apartment_with_amenity_ids_replaces_existing(self):
+        wifi = Amenity.objects.create(name="WiFi")
+        parking = Amenity.objects.create(name="Parking")
+        gym = Amenity.objects.create(name="Gym")
+        apartment = Apartment.objects.create(landlord=self.landlord, name="Amenity Apartment")
+        apartment.amenities.set([wifi, parking])
+
+        serializer = ApartmentSerializer(
+            apartment,
+            data={"name": "Amenity Apartment", "amenity_ids": [str(gym.id)]},
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        apartment = serializer.save()
+
+        self.assertSetEqual(
+            set(apartment.amenities.values_list("id", flat=True)),
+            {gym.id},
+        )
+
+    def test_update_apartment_with_amenity_names(self):
+        wifi = Amenity.objects.create(name="WiFi")
+        apartment = Apartment.objects.create(landlord=self.landlord, name="Name-based Amenities")
+
+        serializer = ApartmentSerializer(
+            apartment,
+            data={"amenity_ids": [str(wifi.id), "Parking", "24/7 Security"]},
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        apartment = serializer.save()
+
+        self.assertSetEqual(
+            set(apartment.amenities.values_list("name", flat=True)),
+            {"WiFi", "Parking", "24/7 Security"},
+        )
+
+
+class UnitImageUploadAPITestCase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.landlord = User.objects.create_user(
+            email="unit-landlord@test.com",
+            password="password",
+            username="unit_landlord_test",
+            role=User.ROLE_LANDLORD,
+        )
+        self.apartment = Apartment.objects.create(
+            landlord=self.landlord,
+            name="Unit Image Apartment",
+        )
+        self.unit = Unit.objects.create(
+            apartment=self.apartment,
+            unit_number_or_id="A-101",
+            price_per_month=40000,
+        )
+
+    def test_landlord_can_upload_multiple_unit_images(self):
+        self.client.force_authenticate(self.landlord)
+        image1 = SimpleUploadedFile("img1.jpg", b"fake-image-1", content_type="image/jpeg")
+        image2 = SimpleUploadedFile("img2.jpg", b"fake-image-2", content_type="image/jpeg")
+
+        response = self.client.post(
+            f"/api/properties/units/{self.unit.id}/upload-images/",
+            {"images": [image1, image2], "image_type": "interior"},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.unit.refresh_from_db()
+        self.assertEqual(len(self.unit.interior_images), 2)
 
 
 class KeyAmenityModelTestCase(TestCase):

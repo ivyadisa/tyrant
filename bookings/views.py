@@ -14,6 +14,26 @@ class BookingCreateView(generics.CreateAPIView):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        unit = serializer.validated_data["unit"]
+        has_active_booking = Booking.objects.filter(
+            unit=unit,
+            booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
+            payment_status__in=["UNPAID", "PENDING", "COMPLETED"],
+        ).exists()
+        if has_active_booking:
+            return Response(
+                {"error": "This unit is already reserved and cannot be booked."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         unit = serializer.validated_data["unit"]
         tenant = self.request.user

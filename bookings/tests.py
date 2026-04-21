@@ -1,6 +1,7 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from datetime import date, timedelta
+from rest_framework.test import APIClient
 from properties.models import Apartment, Unit
 from .models import Booking
 
@@ -112,6 +113,69 @@ class BookingSignalTests(TestCase):
         
         self.unit.refresh_from_db()
         self.assertEqual(self.unit.status, "VACANT")
+
+
+class BookingReservationGuardTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.landlord = User.objects.create_user(
+            username="landlord_guard",
+            email="landlord_guard@test.com",
+            password="testpass123",
+            role="LANDLORD",
+        )
+        self.tenant_one = User.objects.create_user(
+            username="tenant_one_guard",
+            email="tenant_one_guard@test.com",
+            password="testpass123",
+            role="TENANT",
+        )
+        self.tenant_two = User.objects.create_user(
+            username="tenant_two_guard",
+            email="tenant_two_guard@test.com",
+            password="testpass123",
+            role="TENANT",
+        )
+        apartment = Apartment.objects.create(
+            landlord=self.landlord,
+            name="Guard Apartment",
+            address="Nairobi",
+        )
+        self.unit = Unit.objects.create(
+            apartment=apartment,
+            unit_number_or_id="B1",
+            price_per_month=15000,
+            status="VACANT",
+        )
+
+    def test_reserved_unit_cannot_be_booked_by_another_user(self):
+        move_in = date.today() + timedelta(days=15)
+        Booking.objects.create(
+            unit=self.unit,
+            tenant=self.tenant_one,
+            landlord=self.landlord,
+            move_in_date=move_in,
+            booking_amount=1000.00,
+            booking_status="PENDING",
+            payment_status="PENDING",
+        )
+
+        self.client.force_authenticate(self.tenant_two)
+        response = self.client.post(
+            "/api/bookings/",
+            {
+                "unit": str(self.unit.id),
+                "move_in_date": str(move_in),
+                "booking_amount": "1000.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data.get("error"),
+            "This unit is already reserved and cannot be booked.",
+        )
     
     def test_apartment_counts_updated_on_booking_creation(self):
         """Test that apartment unit counts are recalculated on booking creation."""

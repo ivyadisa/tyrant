@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from django.db import models
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth import get_user_model
 from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Review, Tour
+
+User = get_user_model()
 
 class AmenitySerializer(serializers.ModelSerializer):
     class Meta:
@@ -76,9 +80,22 @@ class UnitSerializer(serializers.ModelSerializer):
         read_only_fields = ["last_status_updated", "created_at", "updated_at"]
 
 
+class ApartmentLandlordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "full_name", "email", "phone_number"]
+
+
 class ApartmentSerializer(serializers.ModelSerializer):
     units = UnitSerializer(many=True, read_only=True)
+    landlord_info = ApartmentLandlordSerializer(source="landlord", read_only=True)
     amenities = AmenitySerializer(many=True, read_only=True)
+    amenity_ids = serializers.ListField(
+        child=serializers.CharField(),
+        write_only=True,
+        required=False,
+        help_text="Accepts amenity UUIDs or amenity names.",
+    )
     lease_agreement = LeaseAgreementSerializer(read_only=True)
     amenity_distances = ApartmentAmenityDistanceSerializer(many=True, read_only=True)
     average_rating = serializers.SerializerMethodField()
@@ -89,8 +106,9 @@ class ApartmentSerializer(serializers.ModelSerializer):
         model = Apartment
         fields = [
             "id", "landlord", "name", "address", "latitude", "longitude",
+            "landlord_info",
             "overview_description", "exterior_image", "exterior_image_url", "virtual_tour_url",
-            "lease_agreement", "rules_and_policies", "amenities", "units", "amenity_distances",
+            "lease_agreement", "rules_and_policies", "amenities", "amenity_ids", "units", "amenity_distances",
             "verification_status",
             "total_units", "occupied_units", "created_at", "updated_at",
             "average_rating", "review_count"
@@ -110,6 +128,38 @@ class ApartmentSerializer(serializers.ModelSerializer):
         if obj.exterior_image:
             return obj.exterior_image.url
         return obj.exterior_image_url
+
+    def validate_amenity_ids(self, value):
+        amenities = []
+        for raw_value in value:
+            token = str(raw_value).strip()
+            if not token:
+                continue
+
+            try:
+                amenity = Amenity.objects.get(pk=token)
+            except (Amenity.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+                amenity = Amenity.objects.filter(name__iexact=token).first()
+                if amenity is None:
+                    amenity = Amenity.objects.create(name=token)
+
+            amenities.append(amenity)
+
+        return amenities
+
+    def create(self, validated_data):
+        amenities = validated_data.pop("amenity_ids", None)
+        apartment = super().create(validated_data)
+        if amenities is not None:
+            apartment.amenities.set(amenities)
+        return apartment
+
+    def update(self, instance, validated_data):
+        amenities = validated_data.pop("amenity_ids", None)
+        apartment = super().update(instance, validated_data)
+        if amenities is not None:
+            apartment.amenities.set(amenities)
+        return apartment
 
 
 class ReviewSerializer(serializers.ModelSerializer):

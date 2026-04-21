@@ -16,6 +16,12 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
 
+class PublicUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "full_name", "email", "phone_number", "role"]
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, required=True)

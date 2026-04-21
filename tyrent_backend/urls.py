@@ -1,5 +1,7 @@
 from django.contrib import admin
-from django.urls import path, include 
+from django.urls import path, include, re_path
+from django.conf import settings
+from django.views.static import serve
 from django.contrib.sitemaps.views import sitemap
 from properties.sitemaps import ApartmentSitemap, UnitSitemap
 from drf_spectacular.views import (
@@ -39,3 +41,10 @@ urlpatterns = [
 
     path('api/sitemap.xml', sitemap, {'sitemaps': sitemaps}, name='sitemap'),
 ]
+
+# Serve uploaded media in non-production (even if DEBUG=False).
+# `django.conf.urls.static.static()` is disabled when DEBUG=False, so we use `serve`.
+if getattr(settings, "ENVIRONMENT", "development") != "production":
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]

@@ -15,6 +15,7 @@ from .models import User, NewsletterSubscription, ContactInquiry
 from .serializers import (
     RegisterSerializer,
     UserSerializer,
+    PublicUserSerializer,
     LoginSerializer,
     AdminVerificationSerializer,
     PasswordResetRequestSerializer,
@@ -169,6 +170,18 @@ def update_user_profile(request):
         serializer.save()
         return Response(serializer.data)
     return Response(serializer.errors, status=400)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_public_profile(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"}, status=404)
+
+    serializer = PublicUserSerializer(user)
+    return Response(serializer.data)
 
 
 # =====================================================
