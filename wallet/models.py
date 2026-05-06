@@ -12,7 +12,11 @@ class Wallet(models.Model):
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="wallets")
-    wallet_type = models.CharField(max_length=20, choices=WALLET_TYPE_CHOICES)
+    wallet_type = models.CharField(
+        max_length=20,
+        choices=WALLET_TYPE_CHOICES,
+        default="PLATFORM"
+    )
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     currency = models.CharField(max_length=5, default="KES")
 
@@ -44,6 +48,7 @@ class WalletTransaction(models.Model):
         ("WITHDRAWAL", "Withdrawal"),
         ("COMMISSION_DEDUCTION", "Commission Deduction"),
         ("REFUND", "Refund"),
+        ("SUBSCRIPTION", "Subscription"),
     ]
 
     STATUS_CHOICES = [

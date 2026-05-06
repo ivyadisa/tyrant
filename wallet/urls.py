@@ -6,6 +6,7 @@ urlpatterns = [
     path("transactions/", views.WalletTransactionListView.as_view(), name="wallet-transactions"),
     path("deposit/", views.WalletDepositView.as_view(), name="wallet-deposit"),
     path("withdraw/", views.WalletWithdrawView.as_view(), name="wallet-withdraw"),
-    path("pay/", views.InitiatePaymentView.as_view(), name="wallet-pay"),  # STK Push endpoint
-    path("mpesa/callback/", views.mpesa_callback, name="mpesa-callback"),  # Callback URL
+    path("pay/", views.InitiatePaymentView.as_view(), name="wallet-pay"),
+    path("subscription/", views.InitiateSubscriptionPaymentView.as_view(), name="wallet-subscription"),
+    path("mpesa/callback/", views.mpesa_callback, name="mpesa-callback"),
 ]

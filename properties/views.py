@@ -52,17 +52,21 @@ def occupancy_stats(request):
 
 class IsLandlordOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
+        # Allow unauthenticated users to read (GET, HEAD, OPTIONS)
+        if request.method in permissions.SAFE_METHODS:
+            return True
         return request.user and request.user.is_authenticated
 
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             return True
+        if not request.user or not request.user.is_authenticated:
+            return False
         if hasattr(obj, "landlord"):
             return obj.landlord == request.user or getattr(request.user, "role", "") == "ADMIN"
         if hasattr(obj, "apartment"):
             return obj.apartment.landlord == request.user or getattr(request.user, "role", "") == "ADMIN"
         return False
-
 
 class ApartmentViewSet(viewsets.ModelViewSet):
     queryset = Apartment.objects.all()
@@ -86,7 +90,8 @@ class ApartmentViewSet(viewsets.ModelViewSet):
             except ValueError:
                 pass
 
-        if getattr(user, "role", "").upper() == "LANDLORD":
+        # Only filter by landlord if the user is authenticated AND is a landlord
+        if user and user.is_authenticated and getattr(user, "role", "").upper() == "LANDLORD":
             return qs.filter(landlord=user)
         return qs
 
@@ -132,11 +137,10 @@ class ApartmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="featured")
     def featured(self, request):
-        featured_apps = Apartment.objects.filter(
-            is_approved=True,
-            verification_status="VERIFIED"
-        ).prefetch_related("amenity_distances", "units").order_by("-created_at")[:6]
-        serializer = self.get_serializer(featured_apps, many=True)
+        featured_apts = Apartment.objects.prefetch_related(
+            "amenity_distances", "units"
+        ).order_by("-created_at")[:6]
+        serializer = self.get_serializer(featured_apts, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=["get"], url_path="popular-locations")
@@ -264,8 +268,22 @@ class ApartmentViewSet(viewsets.ModelViewSet):
             if getattr(user, "verification_status", "").upper() != "VERIFIED":
                 raise PermissionDenied("Your account must be verified before creating an apartment.")
 
-        serializer.save(landlord=user)
+            # Count existing apartments vs completed subscription payments
+            #from wallet.models import WalletTransaction
+            #completed_subscriptions = WalletTransaction.objects.filter(
+            #    wallet__user=user,
+            #    transaction_type="SUBSCRIPTION",
+            #    status="COMPLETED",
+            #).count()
 
+            #existing_apartments = Apartment.objects.filter(landlord=user).count()
+
+            #if completed_subscriptions <= existing_apartments:
+            #    raise PermissionDenied(
+            #        "You must complete a subscription payment before listing a new property."
+            #    )
+
+        serializer.save(landlord=user)
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("apartment").all()

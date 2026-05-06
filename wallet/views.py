@@ -1,3 +1,4 @@
+import uuid
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -29,6 +30,19 @@ SAFE_MPESA_IPS = [
 ]
 
 
+def get_or_create_wallet(user):
+    """Helper to always create wallet with correct wallet_type based on user role."""
+    role = getattr(user, "role", "").upper()
+    wallet_type = "LANDLORD" if role == "LANDLORD" else "PLATFORM"
+    wallet, created = Wallet.objects.get_or_create(
+        user=user,
+        defaults={"wallet_type": wallet_type}
+    )
+    if created:
+        logger.info(f"Wallet created for user {user.id} type={wallet_type}")
+    return wallet
+
+
 # ----------------- Wallet Views ----------------- #
 
 class WalletDetailView(generics.RetrieveAPIView):
@@ -36,8 +50,7 @@ class WalletDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        wallet, _ = Wallet.objects.get_or_create(user=self.request.user)
-        return wallet
+        return get_or_create_wallet(self.request.user)
 
 
 class WalletTransactionListView(generics.ListAPIView):
@@ -45,16 +58,19 @@ class WalletTransactionListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return WalletTransaction.objects.filter(wallet__user=self.request.user)
+        wallet = get_or_create_wallet(self.request.user)
+        logger.info(f"Fetching transactions for wallet {wallet.id}, user {self.request.user.id}")
+        txns = WalletTransaction.objects.filter(wallet=wallet)
+        logger.info(f"Found {txns.count()} transactions")
+        return txns
 
 
 class WalletDepositView(generics.CreateAPIView):
-    """Handle wallet deposits"""
     serializer_class = WalletTransactionSerializer
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        wallet = get_or_create_wallet(request.user)
 
         try:
             amount = Decimal(str(request.data.get("amount")))
@@ -86,7 +102,7 @@ class WalletWithdrawView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        wallet = get_or_create_wallet(request.user)
 
         try:
             amount = Decimal(str(request.data.get("amount")))
@@ -126,11 +142,20 @@ class InitiatePaymentView(APIView):
         try:
             phone = request.data.get("phone")
             booking_id = request.data.get("booking_id")
-            amount = BOOKING_AMOUNT  # Fixed at KES 350
+            amount = BOOKING_AMOUNT
 
             if not phone or not booking_id:
                 return Response(
                     {"error": "Phone and booking_id are required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Validate UUID
+            try:
+                uuid.UUID(str(booking_id))
+            except ValueError:
+                return Response(
+                    {"error": "booking_id must be a valid UUID"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -154,9 +179,8 @@ class InitiatePaymentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            wallet, _ = Wallet.objects.get_or_create(user=request.user)
+            wallet = get_or_create_wallet(request.user)
 
-            # INITIATION IDEMPOTENCY — prevent duplicate STK pushes for same booking
             existing_txn = WalletTransaction.objects.filter(
                 wallet=wallet,
                 booking_id=booking_id,
@@ -187,7 +211,7 @@ class InitiatePaymentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            WalletTransaction.objects.create(
+            txn = WalletTransaction.objects.create(
                 wallet=wallet,
                 transaction_type="DEPOSIT",
                 amount=amount,
@@ -197,11 +221,10 @@ class InitiatePaymentView(APIView):
                 phone_number=phone,
                 booking=booking,
             )
+            logger.info(f"Booking payment transaction created: {txn.id}")
 
             booking.payment_status = "PENDING"
             booking.save(update_fields=["payment_status", "updated_at"])
-
-            logger.info(f"STK push initiated: {checkout_id}")
 
             return Response(
                 {
@@ -215,8 +238,91 @@ class InitiatePaymentView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"STK Push Error: {str(e)}")
+            logger.error(f"STK Push Error: {str(e)}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class InitiateSubscriptionPaymentView(APIView):
+    """Handles M-Pesa STK push for property listing subscriptions."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            phone = request.data.get("phone")
+            apartment_id = request.data.get("apartment_id")
+            amount = Decimal("500")
+
+            if not phone:
+                return Response(
+                    {"error": "Phone number is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            wallet = get_or_create_wallet(request.user)
+            logger.info(f"Subscription payment for wallet {wallet.id}, user {request.user.id}")
+
+            # Prevent duplicate pending subscription
+            existing_txn = WalletTransaction.objects.filter(
+                wallet=wallet,
+                transaction_type="SUBSCRIPTION",
+                status="PENDING",
+            ).first()
+
+            if existing_txn:
+                logger.info(f"Existing pending subscription: {existing_txn.id}")
+                return Response(
+                    {
+                        "message": "Subscription payment already initiated",
+                        "checkout_request_id": existing_txn.checkout_request_id,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            response = stk_push(
+                phone,
+                int(amount),
+                settings.MPESA_CALLBACK_URL,
+                apartment_id or "subscription",
+            )
+            logger.info(f"STK push response: {response}")
+
+            checkout_id = response.get("CheckoutRequestID")
+            merchant_id = response.get("MerchantRequestID")
+
+            if not checkout_id:
+                return Response(
+                    {"error": "STK push failed", "details": response},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            txn = WalletTransaction.objects.create(
+                wallet=wallet,
+                transaction_type="SUBSCRIPTION",
+                amount=amount,
+                status="PENDING",
+                checkout_request_id=checkout_id,
+                merchant_request_id=merchant_id,
+                phone_number=phone,
+            )
+            logger.info(f"Subscription transaction created: {txn.id}")
+
+            return Response(
+                {
+                    "message": "STK push initiated successfully",
+                    "checkout_request_id": checkout_id,
+                    "merchant_request_id": merchant_id,
+                    "amount": str(amount),
+                    "phone": phone,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.error(f"Subscription STK Push Error: {str(e)}", exc_info=True)
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 # ----------------- M-Pesa Callback ----------------- #
@@ -226,18 +332,17 @@ def mpesa_callback(request):
     if request.method != "POST":
         return JsonResponse({"ResultCode": 1, "ResultDesc": "Only POST allowed"})
 
-    # IP VALIDATION
-    ip = request.META.get("REMOTE_ADDR")
-    if ip not in SAFE_MPESA_IPS:
-        logger.warning(f"Unauthorized MPESA callback from IP: {ip}")
-        return JsonResponse({"ResultCode": 1, "ResultDesc": "Unauthorized IP"})
+    # IP VALIDATION — commented out for development/testing
+    # ip = request.META.get("REMOTE_ADDR")
+    # if ip not in SAFE_MPESA_IPS:
+    #     logger.warning(f"Unauthorized MPESA callback from IP: {ip}")
+    #     return JsonResponse({"ResultCode": 1, "ResultDesc": "Unauthorized IP"})
 
     try:
         data = json.loads(request.body)
         stk = data.get("Body", {}).get("stkCallback", {})
         checkout_id = stk.get("CheckoutRequestID")
 
-        # CALLBACK IDEMPOTENCY — ignore duplicate callbacks
         if is_duplicate(checkout_id):
             logger.warning(f"Duplicate callback ignored: {checkout_id}")
             return JsonResponse({"ResultCode": 0, "ResultDesc": "Duplicate ignored"})
@@ -250,12 +355,11 @@ def mpesa_callback(request):
         if txn.status == "COMPLETED":
             return JsonResponse({"ResultCode": 0, "ResultDesc": "Already processed"})
 
-        # ASYNC PROCESSING
         process_mpesa_callback.delay(stk)
 
         logger.info(f"MPESA callback received: {checkout_id}")
         return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"})
 
     except Exception as e:
-        logger.error(f"MPESA CALLBACK ERROR: {str(e)}")
+        logger.error(f"MPESA CALLBACK ERROR: {str(e)}", exc_info=True)
         return JsonResponse({"ResultCode": 0, "ResultDesc": "Error handled"})
