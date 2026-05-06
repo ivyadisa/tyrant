@@ -43,14 +43,15 @@ def stk_push(phone_number, amount, callback_url=None, booking_id=None):
         "Password": password,
         "Timestamp": timestamp,
         "TransactionType": "CustomerPayBillOnline",
-        "Amount": amount,
+        "Amount": int(amount),
         "PartyA": phone_number,
         "PartyB": settings.MPESA_SHORTCODE,
         "PhoneNumber": phone_number,
         "CallBackURL": callback_url,
-        "AccountReference": str(booking_id) if booking_id else "Tyrant",
+        "AccountReference": "Tyrent",
         "TransactionDesc": "House Booking Payment"
     }
 
     response = requests.post(url, json=payload, headers=headers)
+    print("MPESA RESPONSE:", response.status_code, response.json())  # ← this line
     return response.json()

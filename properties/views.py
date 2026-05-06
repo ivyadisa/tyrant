@@ -3,8 +3,9 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
 import math
+import os
+import uuid
 
-from verification.models import Verification
 from .models import Apartment, Unit, Amenity, LeaseAgreement, KeyAmenity, ApartmentAmenityDistance, KeyAmenityType, Review, Tour
 from .serializers import (
     ApartmentSerializer, UnitSerializer, AmenitySerializer, LeaseAgreementSerializer,
@@ -16,6 +17,7 @@ from rest_framework.routers import DefaultRouter
 from django.db import transaction
 from django.db.models import Count, Q, Max, Min
 from rest_framework.permissions import IsAuthenticated
+from django.core.files.storage import default_storage
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -50,17 +52,21 @@ def occupancy_stats(request):
 
 class IsLandlordOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
+        # Allow unauthenticated users to read (GET, HEAD, OPTIONS)
+        if request.method in permissions.SAFE_METHODS:
+            return True
         return request.user and request.user.is_authenticated
 
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             return True
+        if not request.user or not request.user.is_authenticated:
+            return False
         if hasattr(obj, "landlord"):
             return obj.landlord == request.user or getattr(request.user, "role", "") == "ADMIN"
         if hasattr(obj, "apartment"):
             return obj.apartment.landlord == request.user or getattr(request.user, "role", "") == "ADMIN"
         return False
-
 
 class ApartmentViewSet(viewsets.ModelViewSet):
     queryset = Apartment.objects.all()
@@ -84,7 +90,8 @@ class ApartmentViewSet(viewsets.ModelViewSet):
             except ValueError:
                 pass
 
-        if getattr(user, "role", "").upper() == "LANDLORD":
+        # Only filter by landlord if the user is authenticated AND is a landlord
+        if user and user.is_authenticated and getattr(user, "role", "").upper() == "LANDLORD":
             return qs.filter(landlord=user)
         return qs
 
@@ -130,11 +137,10 @@ class ApartmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="featured")
     def featured(self, request):
-        featured_apps = Apartment.objects.filter(
-            is_approved=True,
-            verification_status="VERIFIED"
-        ).prefetch_related("amenity_distances", "units").order_by("-created_at")[:6]
-        serializer = self.get_serializer(featured_apps, many=True)
+        featured_apts = Apartment.objects.prefetch_related(
+            "amenity_distances", "units"
+        ).order_by("-created_at")[:6]
+        serializer = self.get_serializer(featured_apts, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=["get"], url_path="popular-locations")
@@ -248,16 +254,36 @@ class ApartmentViewSet(viewsets.ModelViewSet):
         return Response({"message": "Virtual tour URL set successfully"})
 
     def perform_create(self, serializer):
-        if not self.request.user.is_staff:
-            raise PermissionDenied("Only admins can create verification tasks.")
+        user = self.request.user
+        role = getattr(user, "role", "").upper()
 
-        apartment = serializer.validated_data["apartment"]
+        if role not in {"LANDLORD", "ADMIN"}:
+            raise PermissionDenied("Only landlords or admins can create apartments.")
 
-        if apartment.verification_status == "VERIFIED":
-            raise ValidationError("Apartment already verified.")
+        if role == "LANDLORD":
+            if not getattr(user, "email_verified", False):
+                raise PermissionDenied("Please verify your email before creating an apartment.")
+            if getattr(user, "status", "").upper() == "SUSPENDED":
+                raise PermissionDenied("Your account is suspended.")
+            if getattr(user, "verification_status", "").upper() != "VERIFIED":
+                raise PermissionDenied("Your account must be verified before creating an apartment.")
 
-        serializer.save(landlord=self.request.user, status = Verification.Status.ASSIGNED)
+            # Count existing apartments vs completed subscription payments
+            #from wallet.models import WalletTransaction
+            #completed_subscriptions = WalletTransaction.objects.filter(
+            #    wallet__user=user,
+            #    transaction_type="SUBSCRIPTION",
+            #    status="COMPLETED",
+            #).count()
 
+            #existing_apartments = Apartment.objects.filter(landlord=user).count()
+
+            #if completed_subscriptions <= existing_apartments:
+            #    raise PermissionDenied(
+            #        "You must complete a subscription payment before listing a new property."
+            #    )
+
+        serializer.save(landlord=user)
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("apartment").all()
@@ -296,6 +322,49 @@ class UnitViewSet(viewsets.ModelViewSet):
             unit.save()
             unit.apartment.recalc_unit_counts()
         return Response(UnitSerializer(unit).data)
+
+    @action(detail=True, methods=["post"], url_path="upload-images", permission_classes=[IsLandlordOrReadOnly])
+    def upload_images(self, request, pk=None):
+        unit = self.get_object()
+
+        if unit.apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        image_files = request.FILES.getlist("images")
+        if not image_files:
+            return Response({"detail": "No images provided. Use form-data key 'images'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        image_type = request.data.get("image_type", "interior").strip().lower()
+        if image_type not in {"interior", "exterior"}:
+            return Response({"detail": "image_type must be either 'interior' or 'exterior'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_field = "interior_images" if image_type == "interior" else "exterior_images"
+        existing_images = list(getattr(unit, target_field) or [])
+
+        uploaded_urls = []
+        for image in image_files:
+            if not (image.content_type or "").startswith("image/"):
+                return Response({"detail": f"Invalid file type for {image.name}. Only image files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+            ext = os.path.splitext(image.name)[1] or ".jpg"
+            file_name = f"units/{unit.id}/{uuid.uuid4().hex}{ext}"
+            saved_path = default_storage.save(file_name, image)
+            file_url = request.build_absolute_uri(default_storage.url(saved_path))
+            uploaded_urls.append(file_url)
+
+        existing_images.extend(uploaded_urls)
+        setattr(unit, target_field, existing_images)
+        unit.save(update_fields=[target_field, "updated_at"])
+
+        return Response(
+            {
+                "message": f"{len(uploaded_urls)} image(s) uploaded successfully.",
+                "image_type": image_type,
+                target_field: existing_images,
+                "uploaded": uploaded_urls,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class LeaseAgreementViewSet(viewsets.ModelViewSet):

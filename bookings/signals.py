@@ -8,11 +8,17 @@ from datetime import date
 def booking_post_save(sender, instance, created, **kwargs):
     """Update unit status when booking is created or payment status changes."""
     unit = instance.unit
-    
-    # Only process active bookings (not cancelled)
+
     if instance.booking_status == "CANCELLED":
+        active_others = unit.bookings.exclude(id=instance.id).filter(
+            booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"]
+        ).exists()
+        if not active_others:
+            unit.status = "VACANT"
+            unit.save()
+            unit.apartment.recalc_unit_counts()
         return
-    
+
     # Determine status based on payment and move_in_date
     if instance.payment_status == "COMPLETED":
         # Payment confirmed: Check if move_in_date has passed
@@ -20,6 +26,11 @@ def booking_post_save(sender, instance, created, **kwargs):
             unit.status = "OCCUPIED"
         else:
             unit.status = "RESERVED"
+    elif instance.payment_status == "FAILED":
+        active_others = unit.bookings.exclude(id=instance.id).filter(
+            booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"]
+        ).exists()
+        unit.status = "RESERVED" if active_others else "VACANT"
     elif instance.booking_status in ["PENDING", "CONFIRMED"]:
         # Booking created or confirmed but not paid yet
         unit.status = "RESERVED"

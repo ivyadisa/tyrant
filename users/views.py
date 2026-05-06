@@ -15,6 +15,7 @@ from .models import User, NewsletterSubscription, ContactInquiry
 from .serializers import (
     RegisterSerializer,
     UserSerializer,
+    PublicUserSerializer,
     LoginSerializer,
     AdminVerificationSerializer,
     PasswordResetRequestSerializer,
@@ -105,6 +106,20 @@ class CustomLoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data["user"]
 
+            if user.is_superuser and user.role != User.ROLE_ADMIN:
+                user.role = User.ROLE_ADMIN
+                user.email_verified = True
+                user.status = User.STATUS_ACTIVE
+                user.verification_status = User.VERIF_VERIFIED
+                user.save(
+                    update_fields=[
+                        "role",
+                        "email_verified",
+                        "status",
+                        "verification_status",
+                    ]
+                )
+
             if not user.email_verified:
                 return Response(
                     {"error": "Please verify your email before logging in."},
@@ -155,6 +170,18 @@ def update_user_profile(request):
         serializer.save()
         return Response(serializer.data)
     return Response(serializer.errors, status=400)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_public_profile(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"}, status=404)
+
+    serializer = PublicUserSerializer(user)
+    return Response(serializer.data)
 
 
 # =====================================================
@@ -243,19 +270,22 @@ def landlord_dashboard(request):
     from properties.models import Apartment, Unit
     from wallet.models import Wallet
     from bookings.models import Booking
-    
+
     user = request.user
     apartments = Apartment.objects.filter(landlord=user)
     total_units = Unit.objects.filter(apartment__landlord=user).count()
     occupied_units = Unit.objects.filter(apartment__landlord=user, status="OCCUPIED").count()
-    
+
     pending_bookings = Booking.objects.filter(
-        apartment__landlord=user,
-        booking_status="PENDING"
+        landlord=user,
+        booking_status="PENDING",
     ).count()
-    
-    wallet, _ = Wallet.objects.get_or_create(user=user)
-    
+
+    wallet, _ = Wallet.objects.get_or_create(
+        user=user,
+        wallet_type="LANDLORD",
+    )
+
     serializer = LandlordDashboardSerializer(user)
     return Response({
         "message": f"Welcome {user.username}",
@@ -270,7 +300,6 @@ def landlord_dashboard(request):
             "wallet_balance": str(wallet.balance),
         }
     })
-
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsVerifiedTenant])
