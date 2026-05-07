@@ -268,22 +268,35 @@ class ApartmentViewSet(viewsets.ModelViewSet):
             if getattr(user, "verification_status", "").upper() != "VERIFIED":
                 raise PermissionDenied("Your account must be verified before creating an apartment.")
 
-            # Count existing apartments vs completed subscription payments
-            #from wallet.models import WalletTransaction
-            #completed_subscriptions = WalletTransaction.objects.filter(
-            #    wallet__user=user,
-            #    transaction_type="SUBSCRIPTION",
-            #    status="COMPLETED",
+            #from wallet.models import Subscription
+            #active_subscriptions = Subscription.objects.filter(
+            #    landlord=user,
+            #    status="ACTIVE",
             #).count()
-
             #existing_apartments = Apartment.objects.filter(landlord=user).count()
 
-            #if completed_subscriptions <= existing_apartments:
+            #if active_subscriptions <= existing_apartments:
             #    raise PermissionDenied(
             #        "You must complete a subscription payment before listing a new property."
             #    )
 
-        serializer.save(landlord=user)
+        apartment = serializer.save(landlord=user)
+
+        # Link the oldest unattached active subscription to this new apartment
+        #if role == "LANDLORD":
+        #    from wallet.models import Subscription
+        #    unlinked_sub = Subscription.objects.filter(
+        #        landlord=user,
+        #        status="ACTIVE",
+        #        apartment__isnull=True,
+        #    ).order_by("created_at").first()
+
+        #    if unlinked_sub:
+        #        unlinked_sub.apartment = apartment
+        #        unlinked_sub.save(update_fields=["apartment", "updated_at"])
+        #        # Now mark apartment as approved
+        #        apartment.is_approved = True
+        #        apartment.save(update_fields=["is_approved"])
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("apartment").all()

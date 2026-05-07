@@ -54,4 +54,6 @@ def stk_push(phone_number, amount, callback_url=None, booking_id=None):
 
     response = requests.post(url, json=payload, headers=headers)
     print("MPESA RESPONSE:", response.status_code, response.json())  # ← this line
+    print("STK STATUS:", response.status_code)
+    print("STK RAW:", response.text)
     return response.json()

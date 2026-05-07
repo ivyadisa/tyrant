@@ -3,6 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
 from decouple import config
+from celery.schedules import crontab
 
 # --------------------------------------------------
 # BASE DIRECTORY
@@ -37,10 +38,15 @@ if ENVIRONMENT == "production":
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 else:
-    ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+    ALLOWED_HOSTS = [
+        "127.0.0.1", 
+        "localhost",
+        "a752-196-98-70-188.ngrok-free.app",  # add this
+    ]
     CSRF_TRUSTED_ORIGINS = [
         "http://127.0.0.1:8000",
         "http://localhost:8000",
+        "https://a96f-196-98-72-128.ngrok-free.app",  # add this
     ]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
@@ -70,6 +76,14 @@ INSTALLED_APPS = [
     "verification",
     "drf_spectacular",
 ]
+
+
+CELERY_BEAT_SCHEDULE = {
+    "expire-subscriptions-daily": {
+        "task": "wallet.tasks.expire_subscriptions",
+        "schedule": crontab(hour=0, minute=0),  # runs every midnight
+    },
+}
 
 # --------------------------------------------------
 # DRF SPECTACULAR SETTINGS
