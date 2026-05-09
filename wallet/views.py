@@ -9,8 +9,8 @@ from django.db import transaction
 from django.conf import settings
 from bookings.models import Booking
 from decimal import Decimal
-from .models import Wallet, WalletTransaction
-from .serializers import WalletSerializer, WalletTransactionSerializer, PaymentRequestSerializer
+from .models import Wallet, WalletTransaction, PendingPayment
+from .serializers import WalletSerializer, WalletTransactionSerializer
 from .mpesa import stk_push
 from .tasks import process_mpesa_callback
 import json
@@ -19,7 +19,7 @@ from .utils import is_duplicate
 
 logger = logging.getLogger(__name__)
 
-BOOKING_AMOUNT = Decimal("1")
+BOOKING_AMOUNT = Decimal("10")
 
 SAFE_MPESA_IPS = [
     "196.201.214.200",
@@ -136,101 +136,79 @@ class WalletWithdrawView(generics.CreateAPIView):
 
 class InitiatePaymentView(APIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = PaymentRequestSerializer
 
     def post(self, request, *args, **kwargs):
         try:
             phone = request.data.get("phone")
-            booking_id = request.data.get("booking_id")
+            unit_id = request.data.get("unit_id")
             amount = BOOKING_AMOUNT
 
-            if not phone or not booking_id:
+            if not phone or not unit_id:
                 return Response(
-                    {"error": "Phone and booking_id are required"},
+                    {"error": "Phone and unit_id are required"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Validate UUID
+            # Check unit exists and is available
+            from properties.models import Unit
             try:
-                uuid.UUID(str(booking_id))
-            except ValueError:
+                unit = Unit.objects.get(id=unit_id)
+            except Unit.DoesNotExist:
                 return Response(
-                    {"error": "booking_id must be a valid UUID"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            try:
-                booking = Booking.objects.get(id=booking_id, tenant=request.user)
-            except Booking.DoesNotExist:
-                return Response(
-                    {"error": "Booking not found for this user"},
+                    {"error": "Unit not found"},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if booking.booking_status in {"CANCELLED", "COMPLETED"}:
+            # Check no active booking exists
+            from bookings.models import Booking
+            has_active_booking = Booking.objects.filter(
+                unit=unit,
+                booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
+            ).exists()
+            if has_active_booking:
                 return Response(
-                    {"error": "Booking is not eligible for payment"},
+                    {"error": "Unit is already booked"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if booking.payment_status == "COMPLETED":
-                return Response(
-                    {"error": "Booking is already paid"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            wallet = get_or_create_wallet(request.user)
-
-            existing_txn = WalletTransaction.objects.filter(
-                wallet=wallet,
-                booking_id=booking_id,
-                status="PENDING",
+            # Prevent duplicate pending payment for same unit
+            existing = PendingPayment.objects.filter(
+                user=request.user,
+                unit=unit,
             ).first()
-
-            if existing_txn:
-                logger.info(f"Duplicate payment prevented for booking {booking_id}")
+            if existing:
                 return Response(
                     {
                         "message": "Payment already initiated",
-                        "checkout_request_id": existing_txn.checkout_request_id,
+                        "checkout_request_id": existing.checkout_request_id,
                     },
                     status=status.HTTP_200_OK,
                 )
 
-            response = stk_push(phone, int(amount), settings.MPESA_CALLBACK_URL, booking_id)
-
+            response = stk_push(phone, int(amount), settings.MPESA_CALLBACK_URL, str(unit_id))
             checkout_id = response.get("CheckoutRequestID")
             merchant_id = response.get("MerchantRequestID")
 
             if not checkout_id:
-                booking.payment_status = "FAILED"
-                booking.booking_status = "CANCELLED"
-                booking.save(update_fields=["payment_status", "booking_status", "updated_at"])
                 return Response(
                     {"error": "STK push failed", "details": response},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            txn = WalletTransaction.objects.create(
-                wallet=wallet,
-                transaction_type="DEPOSIT",
+            # Store intent — no booking yet
+            PendingPayment.objects.create(
+                user=request.user,
+                unit=unit,
+                phone_number=phone,
                 amount=amount,
-                status="PENDING",
                 checkout_request_id=checkout_id,
                 merchant_request_id=merchant_id,
-                phone_number=phone,
-                booking=booking,
             )
-            logger.info(f"Booking payment transaction created: {txn.id}")
-
-            booking.payment_status = "PENDING"
-            booking.save(update_fields=["payment_status", "updated_at"])
 
             return Response(
                 {
-                    "message": "STK push initiated successfully",
+                    "message": "STK push initiated. Complete payment on your phone.",
                     "checkout_request_id": checkout_id,
-                    "merchant_request_id": merchant_id,
                     "amount": str(amount),
                     "phone": phone,
                 },
@@ -241,16 +219,14 @@ class InitiatePaymentView(APIView):
             logger.error(f"STK Push Error: {str(e)}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
 class InitiateSubscriptionPaymentView(APIView):
-    """Handles M-Pesa STK push for property listing subscriptions."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         try:
             phone = request.data.get("phone")
             apartment_id = request.data.get("apartment_id")
-            amount = Decimal("500")
+            amount = Decimal("10")
 
             if not phone:
                 return Response(
@@ -258,18 +234,38 @@ class InitiateSubscriptionPaymentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            wallet = get_or_create_wallet(request.user)
-            logger.info(f"Subscription payment for wallet {wallet.id}, user {request.user.id}")
+            if not apartment_id:
+                logger.warning("Subscription initiated without apartment_id")
 
-            # Prevent duplicate pending subscription
+            from properties.models import Apartment
+            apartment = None
+            if apartment_id:
+                try:
+                    apartment = Apartment.objects.get(id=apartment_id)
+                except Apartment.DoesNotExist:
+                    return Response(
+                        {"error": "Apartment not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+            # wallet/views.py — replace the existing_txn check in InitiateSubscriptionPaymentView
+
+            from django.utils import timezone
+            from datetime import timedelta
+
+            wallet = get_or_create_wallet(request.user)
+
+            # Only block if PENDING transaction is less than 5 minutes old
+            # Older ones are considered abandoned (user ignored/dismissed the STK push)
+            five_minutes_ago = timezone.now() - timedelta(minutes=5)
             existing_txn = WalletTransaction.objects.filter(
                 wallet=wallet,
                 transaction_type="SUBSCRIPTION",
                 status="PENDING",
+                created_at__gte=five_minutes_ago,
             ).first()
 
             if existing_txn:
-                logger.info(f"Existing pending subscription: {existing_txn.id}")
                 return Response(
                     {
                         "message": "Subscription payment already initiated",
@@ -278,13 +274,18 @@ class InitiateSubscriptionPaymentView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
+            # Auto-expire any stale PENDING transactions before creating a new one
+            WalletTransaction.objects.filter(
+                wallet=wallet,
+                transaction_type="SUBSCRIPTION",
+                status="PENDING",
+                created_at__lt=five_minutes_ago,
+            ).update(status="FAILED")
+            
             response = stk_push(
-                phone,
-                int(amount),
-                settings.MPESA_CALLBACK_URL,
-                apartment_id or "subscription",
+                phone, int(amount), settings.MPESA_CALLBACK_URL,
+                str(apartment_id) if apartment_id else "general"
             )
-            logger.info(f"STK push response: {response}")
 
             checkout_id = response.get("CheckoutRequestID")
             merchant_id = response.get("MerchantRequestID")
@@ -304,6 +305,15 @@ class InitiateSubscriptionPaymentView(APIView):
                 merchant_request_id=merchant_id,
                 phone_number=phone,
             )
+
+            from .models import Subscription
+            Subscription.objects.create(
+                landlord=request.user,
+                apartment=apartment,  # None is now allowed
+                transaction=txn,
+                status="PENDING",
+            )
+
             logger.info(f"Subscription transaction created: {txn.id}")
 
             return Response(
@@ -319,11 +329,7 @@ class InitiateSubscriptionPaymentView(APIView):
 
         except Exception as e:
             logger.error(f"Subscription STK Push Error: {str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ----------------- M-Pesa Callback ----------------- #
 
@@ -331,12 +337,6 @@ class InitiateSubscriptionPaymentView(APIView):
 def mpesa_callback(request):
     if request.method != "POST":
         return JsonResponse({"ResultCode": 1, "ResultDesc": "Only POST allowed"})
-
-    # IP VALIDATION — commented out for development/testing
-    # ip = request.META.get("REMOTE_ADDR")
-    # if ip not in SAFE_MPESA_IPS:
-    #     logger.warning(f"Unauthorized MPESA callback from IP: {ip}")
-    #     return JsonResponse({"ResultCode": 1, "ResultDesc": "Unauthorized IP"})
 
     try:
         data = json.loads(request.body)
@@ -347,13 +347,17 @@ def mpesa_callback(request):
             logger.warning(f"Duplicate callback ignored: {checkout_id}")
             return JsonResponse({"ResultCode": 0, "ResultDesc": "Duplicate ignored"})
 
-        try:
-            txn = WalletTransaction.objects.get(checkout_request_id=checkout_id)
-        except WalletTransaction.DoesNotExist:
-            return JsonResponse({"ResultCode": 0, "ResultDesc": "Ignored"})
+        # Check PendingPayment first (booking payments)
+        pending = PendingPayment.objects.filter(checkout_request_id=checkout_id).first()
 
-        if txn.status == "COMPLETED":
-            return JsonResponse({"ResultCode": 0, "ResultDesc": "Already processed"})
+        # Fall back to WalletTransaction (subscription payments)
+        if not pending:
+            txn = WalletTransaction.objects.filter(checkout_request_id=checkout_id).first()
+            if not txn:
+                logger.warning(f"No record found for {checkout_id}")
+                return JsonResponse({"ResultCode": 0, "ResultDesc": "Ignored"})
+            if txn.status == "COMPLETED":
+                return JsonResponse({"ResultCode": 0, "ResultDesc": "Already processed"})
 
         process_mpesa_callback.delay(stk)
 
@@ -363,3 +367,14 @@ def mpesa_callback(request):
     except Exception as e:
         logger.error(f"MPESA CALLBACK ERROR: {str(e)}", exc_info=True)
         return JsonResponse({"ResultCode": 0, "ResultDesc": "Error handled"})
+
+class SubscriptionStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import Subscription
+        has_active = Subscription.objects.filter(
+            landlord=request.user,
+            status="ACTIVE",
+        ).exists()
+        return Response({"has_active": has_active})

@@ -79,3 +79,54 @@ class WalletTransaction(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+class PendingPayment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    unit = models.ForeignKey('properties.Unit', on_delete=models.CASCADE)
+    phone_number = models.CharField(max_length=20)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    checkout_request_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    merchant_request_id = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+class Subscription(models.Model):
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("ACTIVE", "Active"),
+        ("EXPIRED", "Expired"),
+        ("FAILED", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    landlord = models.ForeignKey(User, on_delete=models.CASCADE, related_name="subscriptions")
+    apartment = models.ForeignKey(
+        "properties.Apartment", 
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True,
+        related_name="subscriptions"
+    )
+    transaction = models.OneToOneField(
+        WalletTransaction, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="subscription"
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.landlord.full_name} - {self.apartment.name} ({self.status})"
+
+    def is_active(self):
+        from django.utils import timezone
+        return self.status == "ACTIVE" and (
+            self.expires_at is None or self.expires_at > timezone.now()
+        )
