@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.conf import settings
 from django.views.static import serve
+from django.http import JsonResponse
 from django.contrib.sitemaps.views import sitemap
 from properties.sitemaps import ApartmentSitemap, UnitSitemap
 from drf_spectacular.views import (
@@ -16,7 +17,11 @@ sitemaps = {
     'units': UnitSitemap,
 }
 
+def health_check(request):
+    return JsonResponse({"status": "ok"})
+
 urlpatterns = [
+    path("api/health/", health_check),
     path('admin/', admin.site.urls),
     # 🔹 Swagger / OpenAPI
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
