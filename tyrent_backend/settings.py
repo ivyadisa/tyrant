@@ -41,12 +41,12 @@ else:
     ALLOWED_HOSTS = [
         "127.0.0.1", 
         "localhost",
-        "a752-196-98-70-188.ngrok-free.app",  # add this
+        "ee64-196-98-72-149.ngrok-free.app",  # add this
     ]
     CSRF_TRUSTED_ORIGINS = [
         "http://127.0.0.1:8000",
         "http://localhost:8000",
-        "https://a96f-196-98-72-128.ngrok-free.app",  # add this
+        "https://ee64-196-98-72-149.ngrok-free.app",  # add this
     ]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False

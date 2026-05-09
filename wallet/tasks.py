@@ -37,6 +37,7 @@ def process_mpesa_callback(self, stk_data):
                 booking_status="PENDING",
                 payment_status="COMPLETED",
                 booking_amount=pending.amount,
+                move_in_date=timezone.now().date(),
             )
 
             wallet, _ = Wallet.objects.get_or_create(
