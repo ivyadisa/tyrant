@@ -67,16 +67,10 @@ class RegisterView(generics.CreateAPIView):
 
             # Send email (might fail silently, so catch exception)
             try:
-                send_mail(
-                    'Verify your email',
-                    f'Your OTP is: {user.email_otp}',
-                    'no-reply@example.com',
-                    [user.email]
-                )
+                send_otp_email(user, subject="Verify your email")
                 print(f"[DEBUG] OTP email sent to {user.email}")
             except Exception as email_err:
                 print("[ERROR] Failed to send OTP email:", email_err)
-                traceback.print_exc()
 
         except Exception as e:
             print("[ERROR] RegisterView perform_create crashed:", e)
