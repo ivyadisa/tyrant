@@ -271,7 +271,7 @@ else:
     EMAIL_USE_SSL = False
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-    EMAIL_TIMEOUT = 10
+    EMAIL_TIMEOUT = 30
 
 DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
 SERVER_EMAIL = "no-reply@tyrenthomes.com"
