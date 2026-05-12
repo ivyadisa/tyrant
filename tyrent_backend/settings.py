@@ -1,4 +1,5 @@
 import os
+import cloudinary
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
@@ -29,24 +30,35 @@ SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-secret-key")
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
 # --------------------------------------------------
-# ALLOWED HOSTS & SECURITY
+# ALLOWED HOSTS & CORS (allow everything)
+# --------------------------------------------------
+ALLOWED_HOSTS = ["*"]
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
+
+# --------------------------------------------------
+# CSRF & SECURITY
 # --------------------------------------------------
 if ENVIRONMENT == "production":
-    ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
-    CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
-    SECURE_SSL_REDIRECT = True
+    CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+    SECURE_SSL_REDIRECT = False  # Railway handles SSL termination
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 else:
-    ALLOWED_HOSTS = [
-        "127.0.0.1", 
-        "localhost",
-        "ee64-196-98-72-149.ngrok-free.app",  # add this
-    ]
     CSRF_TRUSTED_ORIGINS = [
         "http://127.0.0.1:8000",
         "http://localhost:8000",
-        "https://ee64-196-98-72-149.ngrok-free.app",  # add this
     ]
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
@@ -61,12 +73,15 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "cloudinary_storage",
     "django.contrib.staticfiles",
+    "cloudinary",
 
     # Third-party
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
+    "drf_spectacular",
 
     # Local apps
     "users",
@@ -74,35 +89,49 @@ INSTALLED_APPS = [
     "bookings",
     "wallet",
     "verification",
-    "drf_spectacular",
 ]
 
+# --------------------------------------------------
+# CELERY
+# --------------------------------------------------
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 
 CELERY_BEAT_SCHEDULE = {
     "expire-subscriptions-daily": {
         "task": "wallet.tasks.expire_subscriptions",
-        "schedule": crontab(hour=0, minute=0),  # runs every midnight
+        "schedule": crontab(hour=0, minute=0),
     },
 }
 
 # --------------------------------------------------
-# DRF SPECTACULAR SETTINGS
+# CACHE
+# --------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1"),
+    }
+}
+
+# --------------------------------------------------
+# DRF SPECTACULAR
 # --------------------------------------------------
 SPECTACULAR_SETTINGS = {
-    'COMPONENT_SPLIT_REQUEST': True,
-    'SECURITY': [{
-        'tokenAuth': []
-    }],
-    'APPEND_COMPONENTS': {
-        'securitySchemes': {
-            'tokenAuth': {
-                'type': 'apiKey',
-                'in': 'header',
-                'name': 'Authorization',
-                'description': 'Token-based authentication. Format: "Token <your-token>"'
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SECURITY": [{"tokenAuth": []}],
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "tokenAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "Authorization",
+                "description": 'Token-based authentication. Format: "Token <your-token>"',
             }
         }
-    }
+    },
 }
 
 # --------------------------------------------------
@@ -119,16 +148,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-
-# --------------------------------------------------
-# CORS SETTINGS
-# --------------------------------------------------
-if ENVIRONMENT == "production":
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
-    CORS_ALLOW_CREDENTIALS = True
-else:
-    CORS_ALLOW_ALL_ORIGINS = True
 
 # --------------------------------------------------
 # ROOT URL
@@ -162,12 +181,17 @@ WSGI_APPLICATION = "tyrent_backend.wsgi.application"
 if ENVIRONMENT == "production":
     DATABASES = {
         "default": dj_database_url.config(
-            default=os.getenv("DATABASE_URL")
+            default=os.getenv("DATABASE_URL"),
+            conn_max_age=600,
+            ssl_require=True,
         )
     }
 else:
     DATABASES = {
-        "default": {
+        "default": dj_database_url.config(
+            default=os.getenv("DATABASE_URL"),  # ✅ uses Railway DB in dev too
+            conn_max_age=600,
+        ) if os.getenv("DATABASE_URL") else {
             "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.postgresql"),
             "NAME": os.getenv("DB_NAME", "tyrent_db"),
             "USER": os.getenv("DB_USER", "postgres"),
@@ -200,12 +224,22 @@ USE_TZ = True
 # --------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # --------------------------------------------------
 # MEDIA FILES
 # --------------------------------------------------
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+
+if ENVIRONMENT == "production":
+    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+    CLOUDINARY_STORAGE = {
+        "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
+        "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
+        "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
+    }
+else:
+    MEDIA_ROOT = BASE_DIR / "media"
 
 # --------------------------------------------------
 # CUSTOM USER MODEL
@@ -220,69 +254,64 @@ REST_FRAMEWORK = {
         "users.authentication.FlexibleTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "rest_framework.permissions.AllowAny",  # ✅ Allow public access by default
     ],
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema'
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 # --------------------------------------------------
-# EMAIL CONFIGURATION (FOR OTP)
+# EMAIL CONFIGURATION
 # --------------------------------------------------
-
-# For Development (prints OTP in terminal)
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-
-# For Production (real email sending)
 else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    EMAIL_HOST = os.getenv("EMAIL_HOST")
-    EMAIL_PORT = os.getenv("EMAIL_PORT", 587)
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "mail.spaceship.com")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
     EMAIL_USE_TLS = True
+    EMAIL_USE_SSL = False
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+    EMAIL_TIMEOUT = 10
 
-DEFAULT_FROM_EMAIL = "no-reply@tyrent.com"
+DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
+SERVER_EMAIL = "no-reply@tyrenthomes.com"
+
 
 # --------------------------------------------------
 # OTP SETTINGS
 # --------------------------------------------------
-OTP_EXPIRATION_MINUTES = 10  
+OTP_EXPIRATION_MINUTES = 10
 
-MPESA_CONSUMER_KEY = config('MPESA_CONSUMER_KEY')
-MPESA_CONSUMER_SECRET = config('MPESA_CONSUMER_SECRET')
-MPESA_SHORTCODE = config('MPESA_SHORTCODE')
-MPESA_PASSKEY = config('MPESA_PASSKEY')
-MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL')
+# --------------------------------------------------
+# MPESA SETTINGS
+# --------------------------------------------------
+MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY", "")
+MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET", "")
+MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "")
+MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
+MPESA_CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL", "")
 
-
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
-
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
-    }
-}
-
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': 'mpesa.log',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
         },
     },
-    'loggers': {
-        'payments': {
-            'handlers': ['file'],
-            'level': 'INFO',
-            'propagate': False,
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "payments": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
