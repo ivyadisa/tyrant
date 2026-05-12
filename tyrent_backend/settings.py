@@ -32,20 +32,20 @@ DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 # --------------------------------------------------
 # ALLOWED HOSTS & CORS (allow everything)
 # --------------------------------------------------
-ALLOWED_HOSTS = ["*"]
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-encoding",
-    "authorization",
-    "content-type",
-    "dnt",
-    "origin",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
+ALLOWED_HOSTS = [
+    "tyrant-production.up.railway.app",
+    "www.tyrenthomes.com",
+    "tyrenthomes.com",
 ]
+
+CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGINS = [
+    "https://www.tyrenthomes.com",
+    "https://tyrenthomes.com",
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 # --------------------------------------------------
 # CSRF & SECURITY
@@ -237,8 +237,16 @@ if ENVIRONMENT == "production":
         "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
         "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
     }
+    cloudinary.config(
+        cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+        api_key=os.getenv("CLOUDINARY_API_KEY"),
+        api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    )
 else:
     MEDIA_ROOT = BASE_DIR / "media"
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
 
 # --------------------------------------------------
 # CUSTOM USER MODEL

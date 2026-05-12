@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from django.core.mail import send_mail
+from rest_framework.parsers import MultiPartParser, FormParser
 import random
 
 from django.utils import timezone
@@ -46,6 +47,7 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
 
     def perform_create(self, serializer):
         import traceback
@@ -53,7 +55,7 @@ class RegisterView(generics.CreateAPIView):
             user = serializer.save()
             print(f"[DEBUG] User {user.username} created successfully.")
 
-            if User.objects.count() == 1:  # first user
+            if not User.objects.exclude(id=user.id).exists():  # first user
                 user.role = User.ROLE_ADMIN
                 user.verification_status = User.VERIF_VERIFIED
                 user.save()
