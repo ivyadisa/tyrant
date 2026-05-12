@@ -264,23 +264,16 @@ REST_FRAMEWORK = {
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 else:
-    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    EMAIL_HOST = os.getenv("EMAIL_HOST", "mail.spaceship.com")
-    EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
-    EMAIL_USE_TLS = False
-    EMAIL_USE_SSL = True
-    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
-    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-    EMAIL_TIMEOUT = 30
-
-DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
-SERVER_EMAIL = "no-reply@tyrenthomes.com"
+    EMAIL_BACKEND = "sendgrid_backend.SendgridBackend"
+    SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+    SENDGRID_SANDBOX_MODE_IN_DEBUG = False
+    DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
 
 
 # --------------------------------------------------
 # OTP SETTINGS
 # --------------------------------------------------
-OTP_EXPIRATION_MINUTES = 10
+OTP_EXPIRATION_MINUTES = 120
 
 # --------------------------------------------------
 # MPESA SETTINGS
