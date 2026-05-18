@@ -1,5 +1,6 @@
 from celery import shared_task
 import logging
+from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
@@ -16,6 +17,8 @@ def process_mpesa_callback(self, stk_data):
 
     checkout_id = stk_data.get("CheckoutRequestID")
     result_code = stk_data.get("ResultCode")
+
+    result_code = int(result_code) if result_code is not None else -1
 
     # Extract M-Pesa receipt number
     items = stk_data.get("CallbackMetadata", {}).get("Item", [])
@@ -61,16 +64,11 @@ def process_mpesa_callback(self, stk_data):
         logger.info(f"Booking {booking.id} created after successful payment {checkout_id}")
         return "Booking Created"
 
-    # wallet/tasks.py — full corrected subscription section
-
     # --- Handle subscription payment via WalletTransaction ---
     txn = WalletTransaction.objects.filter(checkout_request_id=checkout_id).first()
     if txn:
         with transaction.atomic():
             if result_code == 0:
-                from django.utils import timezone
-                from datetime import timedelta
-
                 txn.status = "COMPLETED"
                 txn.mpesa_receipt_number = receipt
                 txn.save(update_fields=["status", "mpesa_receipt_number"])
@@ -106,7 +104,6 @@ def process_mpesa_callback(self, stk_data):
 
 def expire_subscriptions():
     from .models import Subscription
-    from properties.models import Apartment
 
     expired = Subscription.objects.filter(
         status="ACTIVE",
@@ -116,16 +113,14 @@ def expire_subscriptions():
         sub.status = "EXPIRED"
         sub.save(update_fields=["status", "updated_at"])
 
-        # Same fix — guard with apartment_id not sub.apartment
         if sub.apartment_id:
             sub.apartment.is_approved = False
             sub.apartment.save(update_fields=["is_approved"])
 
+
 def expire_stale_pending_transactions():
     """Mark PENDING transactions older than 10 minutes as FAILED."""
     from .models import WalletTransaction
-    from django.utils import timezone
-    from datetime import timedelta
 
     cutoff = timezone.now() - timedelta(minutes=10)
     stale = WalletTransaction.objects.filter(
