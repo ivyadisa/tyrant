@@ -34,8 +34,12 @@ DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 # --------------------------------------------------
 ALLOWED_HOSTS = [
     "tyrant-production.up.railway.app",
+    "tyrant-production-f07f.up.railway.app",
     "www.tyrenthomes.com",
     "tyrenthomes.com",
+    "localhost:3000",
+    "127.0.0.1",
+    "localhost",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False
@@ -43,6 +47,7 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "https://www.tyrenthomes.com",
     "https://tyrenthomes.com",
+    "http://localhost:3000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
