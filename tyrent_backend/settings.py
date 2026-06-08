@@ -35,6 +35,8 @@ DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 ALLOWED_HOSTS = [
     "tyrant-production.up.railway.app",
     "tyrant-production-f07f.up.railway.app",
+    "peaceful-love-production-34dd.up.railway.app",
+    "capable-patience-production-fa1b.up.railway.app",
     "www.tyrenthomes.com",
     "tyrenthomes.com",
     "localhost:3000",
