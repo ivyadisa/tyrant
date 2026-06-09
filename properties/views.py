@@ -394,6 +394,30 @@ class UnitViewSet(viewsets.ModelViewSet):
         if not content_type.startswith("video/"):
             return Response({"detail": "Invalid file type. Only video files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
+        max_size = 10 * 1024 * 1024  # 10MB
+        import tempfile
+        import os
+        import subprocess
+        from django.core.files.base import ContentFile
+
+        # If video is under 10MB, use as-is (no compression needed)
+        if video.size <= max_size:
+            # Delete old video if exists
+            if unit.video:
+                try:
+                    default_storage.delete(unit.video.name)
+                except Exception:
+                    pass
+            unit.video = video
+            unit.save(update_fields=["video", "updated_at"])
+            return Response(
+                {
+                    "message": "Video uploaded successfully.",
+                    "video_url": unit.video.url,
+                },
+                status=status.HTTP_200_OK,
+            )
+
         # Delete old video if exists
         if unit.video:
             try:
@@ -401,8 +425,45 @@ class UnitViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
-        unit.video = video
-        unit.save(update_fields=["video", "updated_at"])
+        # Save uploaded video to temp file for compression
+        video_data = video.read()
+        temp_input = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        temp_input.write(video_data)
+        temp_input.close()
+
+        try:
+            # Compress video using ffmpeg
+            temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+            # Use ffmpeg to compress - target ~8MB to ensure under limit
+            cmd = [
+                'ffmpeg', '-i', temp_input.name,
+                '-vcodec', 'libx264', '-crf', '28',
+                '-preset', 'fast', '-s', '1280x720',
+                '-b:v', '1500k', '-maxrate', '1500k',
+                '-bufsize', '3000k', '-acodec', 'aac',
+                '-b:a', '128k', '-y', temp_output
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=300)
+            if result.returncode != 0:
+                return Response(
+                    {"detail": "Failed to compress video. Please try a smaller file."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Read compressed file
+            with open(temp_output, 'rb') as f:
+                compressed_data = f.read()
+
+            # Create a ContentFile from the compressed data
+            unit.video = ContentFile(compressed_data, name=video.name)
+            unit.save(update_fields=["video", "updated_at"])
+        finally:
+            # Clean up temp files
+            try:
+                os.unlink(temp_input.name)
+                os.unlink(temp_output)
+            except Exception:
+                pass
 
         return Response(
             {

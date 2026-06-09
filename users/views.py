@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from django.core.mail import send_mail
+from django.db import models
 from rest_framework.parsers import MultiPartParser, FormParser
 import random
 
@@ -295,6 +296,83 @@ def landlord_dashboard(request):
             "pending_bookings": pending_bookings,
             "wallet_balance": str(wallet.balance),
         }
+    })
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsVerifiedLandlord])
+def landlord_analytics(request):
+    from properties.models import Apartment, Unit
+    from bookings.models import Booking
+    from wallet.models import Wallet, WalletTransaction
+
+    user = request.user
+    thirty_days_ago = timezone.now() - timezone.timedelta(days=30)
+
+    apartments = Apartment.objects.filter(landlord=user)
+    apartment_ids = apartments.values_list("id", flat=True)
+
+    # Unit stats
+    total_units = Unit.objects.filter(apartment__landlord=user).count()
+    occupied_units = Unit.objects.filter(apartment__landlord=user, status="OCCUPIED").count()
+    vacant_units = total_units - occupied_units
+
+    # Booking stats (last 30 days)
+    recent_bookings = Booking.objects.filter(
+        landlord=user,
+        created_at__gte=thirty_days_ago
+    )
+    total_bookings = recent_bookings.count()
+    confirmed_bookings = recent_bookings.filter(booking_status="CONFIRMED").count()
+    pending_bookings = recent_bookings.filter(booking_status="PENDING").count()
+    cancelled_bookings = recent_bookings.filter(booking_status="CANCELLED").count()
+
+    # Revenue (last 30 days)
+    revenue = WalletTransaction.objects.filter(
+        wallet__user=user,
+        status="COMPLETED",
+        transaction_type="DEPOSIT",
+        created_at__gte=thirty_days_ago
+    ).aggregate(total=models.Sum("amount"))["total"] or 0
+
+    # Occupancy trend
+    occupancy_rate = round((occupied_units / total_units * 100) if total_units > 0 else 0, 1)
+
+    # Apartment performance
+    apartment_performance = []
+    for apt in apartments:
+        apt_bookings = Booking.objects.filter(unit__apartment=apt).count()
+        apt_revenue = WalletTransaction.objects.filter(
+            wallet__user=user,
+            status="COMPLETED",
+            transaction_type="DEPOSIT",
+            reference_id__in=Booking.objects.filter(unit__apartment=apt).values_list("id", flat=True),
+            created_at__gte=thirty_days_ago
+        ).aggregate(total=models.Sum("amount"))["total"] or 0
+        apartment_performance.append({
+            "apartment_id": str(apt.id),
+            "name": apt.name,
+            "total_units": apt.total_units,
+            "occupied_units": apt.occupied_units,
+            "bookings": apt_bookings,
+            "revenue": str(apt_revenue),
+        })
+
+    return Response({
+        "period": "last_30_days",
+        "units": {
+            "total": total_units,
+            "occupied": occupied_units,
+            "vacant": vacant_units,
+            "occupancy_rate": occupancy_rate,
+        },
+        "bookings": {
+            "total": total_bookings,
+            "confirmed": confirmed_bookings,
+            "pending": pending_bookings,
+            "cancelled": cancelled_bookings,
+        },
+        "revenue": str(revenue),
+        "apartments": apartment_performance,
     })
 
 @api_view(["GET"])
