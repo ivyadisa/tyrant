@@ -70,14 +70,21 @@ class LeaseAgreementUploadSerializer(serializers.Serializer):
 
 
 class UnitSerializer(serializers.ModelSerializer):
+    video_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Unit
         fields = [
             "id", "apartment", "unit_number_or_id", "category", "type",
             "size_sqft", "price_per_month", "status", "interior_images",
-            "exterior_images", "description", "last_status_updated", "created_at", "updated_at"
+            "exterior_images", "video", "video_url", "description", "last_status_updated", "created_at", "updated_at"
         ]
-        read_only_fields = ["last_status_updated", "created_at", "updated_at"]
+        read_only_fields = ["last_status_updated", "created_at", "updated_at", "video_url"]
+
+    def get_video_url(self, obj):
+        if obj.video:
+            return obj.video.url
+        return None
 
 
 class ApartmentLandlordSerializer(serializers.ModelSerializer):

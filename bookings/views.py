@@ -44,11 +44,12 @@ class BookingCreateView(generics.CreateAPIView):
         tenant = self.request.user
         landlord = unit.apartment.landlord
 
+        # For testing phase: auto-confirm bookings without payment
         serializer.save(
             tenant=tenant,
             landlord=landlord,
-            booking_status="PENDING",
-            payment_status="UNPAID",
+            booking_status="CONFIRMED",
+            payment_status="COMPLETED",
         )
 
 

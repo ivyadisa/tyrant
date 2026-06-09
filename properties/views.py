@@ -379,6 +379,39 @@ class UnitViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"], url_path="upload-video", permission_classes=[IsLandlordOrReadOnly])
+    def upload_video(self, request, pk=None):
+        unit = self.get_object()
+
+        if unit.apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        video = request.FILES.get("video")
+        if not video:
+            return Response({"detail": "No video provided. Use form-data key 'video'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        content_type = video.content_type or ""
+        if not content_type.startswith("video/"):
+            return Response({"detail": "Invalid file type. Only video files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Delete old video if exists
+        if unit.video:
+            try:
+                default_storage.delete(unit.video.name)
+            except Exception:
+                pass
+
+        unit.video = video
+        unit.save(update_fields=["video", "updated_at"])
+
+        return Response(
+            {
+                "message": "Video uploaded successfully.",
+                "video_url": unit.video.url,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class LeaseAgreementViewSet(viewsets.ModelViewSet):
     queryset = LeaseAgreement.objects.select_related("apartment").all()
