@@ -4,6 +4,8 @@ from django.db import models
 from django.conf import settings
 from django.urls import reverse
 from django.core.validators import FileExtensionValidator
+from cloudinary.models import CloudinaryField
+
 
 User = settings.AUTH_USER_MODEL
 
@@ -181,7 +183,13 @@ class Unit(models.Model):
     status = models.CharField(max_length=20, choices=OCCUPANCY_STATUS_CHOICES, default="VACANT")
     interior_images = models.JSONField(default=list, blank=True)
     exterior_images = models.JSONField(default=list, blank=True)
-    video = models.FileField(upload_to='units/videos/%Y/%m/%d/', blank=True, null=True, validators=[FileExtensionValidator(allowed_extensions=['mp4', 'mov', 'avi', 'webm'])])
+    video = CloudinaryField(
+        'video',
+        resource_type='video',
+        blank=True,
+        null=True,
+        help_text="Unit video tour (max 100MB)"
+    )
     description = models.TextField(blank=True)
     last_status_updated = models.DateTimeField(auto_now=True)
 

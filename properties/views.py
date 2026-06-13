@@ -382,40 +382,33 @@ class UnitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="upload-video", permission_classes=[IsLandlordOrReadOnly])
     def upload_video(self, request, pk=None):
         unit = self.get_object()
+
         if unit.apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
             return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
-        
-        video = request.FILES.get("video")
-        if not video:
-            return Response({"detail": "No video provided. Use form-data key 'video'."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        content_type = video.content_type or ""
-        if not content_type.startswith("video/"):
-            return Response({"detail": "Invalid file type. Only video files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Reject files over 10MB (Cloudinary free plan limit)
-        if video.size > 10 * 1024 * 1024:
+
+        video_file = request.FILES.get("video")
+        if not video_file:
+            return Response({"error": "No video file provided"}, status=400)
+
+        # 100MB limit
+        if video_file.size > 100 * 1024 * 1024:
+            return Response({"error": "Video must be under 100MB"}, status=400)
+
+        allowed = ['mp4', 'mov', 'avi', 'webm']
+        ext = video_file.name.split('.')[-1].lower()
+        if ext not in allowed:
             return Response(
-                {"detail": "Video too large. Maximum size is 10MB."},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": f"Invalid format. Allowed: {', '.join(allowed)}"},
+                status=400
             )
-        
-        # Delete old video if exists
-        if unit.video:
-            try:
-                default_storage.delete(unit.video.name)
-            except Exception:
-                pass
-        
-        unit.video = video
+
+        unit.video = video_file
         unit.save(update_fields=["video", "updated_at"])
-        return Response(
-            {
-                "message": "Video uploaded successfully.",
-                "video_url": unit.video.url,
-            },
-            status=status.HTTP_200_OK,
-        )
+
+        return Response({
+            "message": "Video uploaded successfully",
+            "video_url": unit.video.url if unit.video else None,
+        })
 
 
 class LeaseAgreementViewSet(viewsets.ModelViewSet):
