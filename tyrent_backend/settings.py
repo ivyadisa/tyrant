@@ -96,6 +96,7 @@ INSTALLED_APPS = [
     "bookings",
     "wallet",
     "verification",
+    "notifications",
 ]
 
 # --------------------------------------------------

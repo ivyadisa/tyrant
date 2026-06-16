@@ -41,6 +41,7 @@ urlpatterns = [
 
     path('api/wallet/', include('wallet.urls')),
     path('api/bookings/', include('bookings.urls')),
+    path('api/notifications/', include('notifications.urls')),
 
     path("api/", include("verification.urls")),
 
