@@ -1,37 +1,33 @@
 import uuid
+import json
+import logging
+from decimal import Decimal
+
+from django.conf import settings
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.db import transaction
+from django.utils import timezone
+from datetime import timedelta
+
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.db import transaction
-from django.conf import settings
+
 from bookings.models import Booking
-from decimal import Decimal
 from .models import Wallet, WalletTransaction, PendingPayment
 from .serializers import WalletSerializer, WalletTransactionSerializer
-from .mpesa import stk_push
-from .tasks import process_mpesa_callback
-import json
-import logging
+from .intasend import stk_push, check_status
+from .tasks import process_intasend_webhook
 from .utils import is_duplicate
 
 logger = logging.getLogger(__name__)
 
-BOOKING_AMOUNT = Decimal("10")
-
-SAFE_MPESA_IPS = [
-    "196.201.214.200",
-    "196.201.214.206",
-    "196.201.213.114",
-    "196.201.214.207",
-    "196.201.214.208",
-]
+BOOKING_AMOUNT = Decimal("10")   # KES 500 — change to your actual amount
 
 
 def get_or_create_wallet(user):
-    """Helper to always create wallet with correct wallet_type based on user role."""
     role = getattr(user, "role", "").upper()
     wallet_type = "LANDLORD" if role == "LANDLORD" else "PLATFORM"
     wallet, created = Wallet.objects.get_or_create(
@@ -43,7 +39,7 @@ def get_or_create_wallet(user):
     return wallet
 
 
-# ----------------- Wallet Views ----------------- #
+# ── Wallet Views ──────────────────────────────────────────────────────────────
 
 class WalletDetailView(generics.RetrieveAPIView):
     serializer_class = WalletSerializer
@@ -59,10 +55,7 @@ class WalletTransactionListView(generics.ListAPIView):
 
     def get_queryset(self):
         wallet = get_or_create_wallet(self.request.user)
-        logger.info(f"Fetching transactions for wallet {wallet.id}, user {self.request.user.id}")
-        txns = WalletTransaction.objects.filter(wallet=wallet)
-        logger.info(f"Found {txns.count()} transactions")
-        return txns
+        return WalletTransaction.objects.filter(wallet=wallet)
 
 
 class WalletDepositView(generics.CreateAPIView):
@@ -71,7 +64,6 @@ class WalletDepositView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         wallet = get_or_create_wallet(request.user)
-
         try:
             amount = Decimal(str(request.data.get("amount")))
             if amount <= 0:
@@ -81,7 +73,7 @@ class WalletDepositView(generics.CreateAPIView):
 
         with transaction.atomic():
             wallet.deposit(amount)
-            transaction_obj = WalletTransaction.objects.create(
+            txn = WalletTransaction.objects.create(
                 wallet=wallet,
                 transaction_type="DEPOSIT",
                 amount=amount,
@@ -89,10 +81,7 @@ class WalletDepositView(generics.CreateAPIView):
             )
 
         return Response(
-            {
-                "message": "Deposit successful",
-                "transaction": WalletTransactionSerializer(transaction_obj).data,
-            },
+            {"message": "Deposit successful", "transaction": WalletTransactionSerializer(txn).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -103,7 +92,6 @@ class WalletWithdrawView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         wallet = get_or_create_wallet(request.user)
-
         try:
             amount = Decimal(str(request.data.get("amount")))
             if amount <= 0:
@@ -116,7 +104,7 @@ class WalletWithdrawView(generics.CreateAPIView):
 
         with transaction.atomic():
             wallet.withdraw(amount)
-            transaction_obj = WalletTransaction.objects.create(
+            txn = WalletTransaction.objects.create(
                 wallet=wallet,
                 transaction_type="WITHDRAWAL",
                 amount=amount,
@@ -124,249 +112,279 @@ class WalletWithdrawView(generics.CreateAPIView):
             )
 
         return Response(
-            {
-                "message": "Withdrawal successful",
-                "transaction": WalletTransactionSerializer(transaction_obj).data,
-            },
+            {"message": "Withdrawal successful", "transaction": WalletTransactionSerializer(txn).data},
             status=status.HTTP_201_CREATED,
         )
 
 
-# ----------------- STK Push View ----------------- #
+# ── STK Push — Booking Payment ────────────────────────────────────────────────
 
 class InitiatePaymentView(APIView):
+    """Tenant pays to book a unit via M-Pesa STK Push."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        try:
-            phone = request.data.get("phone")
-            unit_id = request.data.get("unit_id")
-            amount = BOOKING_AMOUNT
+        phone = request.data.get("phone") or request.data.get("phone_number")
+        unit_id = request.data.get("unit_id")
+        amount = BOOKING_AMOUNT
 
-            if not phone or not unit_id:
-                return Response(
-                    {"error": "Phone and unit_id are required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Check unit exists and is available
-            from properties.models import Unit
-            try:
-                unit = Unit.objects.get(id=unit_id)
-            except Unit.DoesNotExist:
-                return Response(
-                    {"error": "Unit not found"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-
-            # Check no active booking exists
-            from bookings.models import Booking
-            has_active_booking = Booking.objects.filter(
-                unit=unit,
-                booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
-            ).exists()
-            if has_active_booking:
-                return Response(
-                    {"error": "Unit is already booked"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Prevent duplicate pending payment for same unit
-            existing = PendingPayment.objects.filter(
-                user=request.user,
-                unit=unit,
-            ).first()
-            if existing:
-                return Response(
-                    {
-                        "message": "Payment already initiated",
-                        "checkout_request_id": existing.checkout_request_id,
-                    },
-                    status=status.HTTP_200_OK,
-                )
-
-            response = stk_push(phone, int(amount), settings.MPESA_CALLBACK_URL, str(unit_id))
-            checkout_id = response.get("CheckoutRequestID")
-            merchant_id = response.get("MerchantRequestID")
-
-            if not checkout_id:
-                return Response(
-                    {"error": "STK push failed", "details": response},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Store intent — no booking yet
-            PendingPayment.objects.create(
-                user=request.user,
-                unit=unit,
-                phone_number=phone,
-                amount=amount,
-                checkout_request_id=checkout_id,
-                merchant_request_id=merchant_id,
+        if not phone or not unit_id:
+            return Response(
+                {"error": "phone and unit_id are required"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        try:
+            from properties.models import Unit
+            unit = Unit.objects.get(id=unit_id)
+        except Unit.DoesNotExist:
+            return Response({"error": "Unit not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        has_active = Booking.objects.filter(
+            unit=unit,
+            booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
+        ).exists()
+        if has_active:
+            return Response({"error": "Unit is already booked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Block duplicate within 5 minutes
+        five_min_ago = timezone.now() - timedelta(minutes=5)
+        existing = PendingPayment.objects.filter(
+            user=request.user,
+            unit=unit,
+            status="PENDING",
+            created_at__gte=five_min_ago,
+        ).first()
+        if existing:
             return Response(
-                {
-                    "message": "STK push initiated. Complete payment on your phone.",
-                    "checkout_request_id": checkout_id,
-                    "amount": str(amount),
-                    "phone": phone,
-                },
+                {"message": "Payment already initiated", "invoice_id": existing.checkout_request_id},
                 status=status.HTTP_200_OK,
             )
 
+        # Expire stale pending payments
+        PendingPayment.objects.filter(
+            user=request.user,
+            unit=unit,
+            status="PENDING",
+            created_at__lt=five_min_ago,
+        ).update(status="FAILED")
+
+        try:
+            response = stk_push(
+                phone_number=phone,
+                amount=int(amount),
+                narrative=f"Tyrent Homes - Unit Booking",
+            )
         except Exception as e:
-            logger.error(f"STK Push Error: {str(e)}", exc_info=True)
+            logger.error(f"IntaSend STK Push error: {e}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # IntaSend SDK returns invoice details directly
+        invoice = response.get("invoice", {})
+        invoice_id = invoice.get("invoice_id") or invoice.get("id")
+
+        if not invoice_id:
+            logger.error(f"No invoice_id in IntaSend response: {response}")
+            return Response(
+                {"error": "STK push failed", "details": response},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        PendingPayment.objects.create(
+            user=request.user,
+            unit=unit,
+            phone_number=phone,
+            amount=amount,
+            checkout_request_id=invoice_id,
+        )
+
+        return Response(
+            {
+                "message": "STK push sent. Enter your M-Pesa PIN to complete.",
+                "invoice_id": invoice_id,
+                "amount": str(amount),
+                "phone": phone,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ── STK Push — Subscription Payment ──────────────────────────────────────────
 
 class InitiateSubscriptionPaymentView(APIView):
+    """Landlord pays subscription via M-Pesa STK Push."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        try:
-            phone = request.data.get("phone")
-            apartment_id = request.data.get("apartment_id")
-            amount = Decimal("10")
+        phone = request.data.get("phone") or request.data.get("phone_number")
+        apartment_id = request.data.get("apartment_id")
+        amount = Decimal("500")   # KES 500 subscription fee
 
-            if not phone:
-                return Response(
-                    {"error": "Phone number is required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        if not phone:
+            return Response({"error": "Phone number is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-            if not apartment_id:
-                logger.warning("Subscription initiated without apartment_id")
+        if not apartment_id:
+            logger.warning("Subscription initiated without apartment_id")
 
+        apartment = None
+        if apartment_id:
             from properties.models import Apartment
-            apartment = None
-            if apartment_id:
-                try:
-                    apartment = Apartment.objects.get(id=apartment_id)
-                except Apartment.DoesNotExist:
-                    return Response(
-                        {"error": "Apartment not found"},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+            try:
+                apartment = Apartment.objects.get(id=apartment_id)
+            except Apartment.DoesNotExist:
+                return Response({"error": "Apartment not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            # wallet/views.py — replace the existing_txn check in InitiateSubscriptionPaymentView
+        wallet = get_or_create_wallet(request.user)
 
-            from django.utils import timezone
-            from datetime import timedelta
+        # Block duplicate within 5 minutes
+        five_min_ago = timezone.now() - timedelta(minutes=5)
+        existing_txn = WalletTransaction.objects.filter(
+            wallet=wallet,
+            transaction_type="SUBSCRIPTION",
+            status="PENDING",
+            created_at__gte=five_min_ago,
+        ).first()
 
-            wallet = get_or_create_wallet(request.user)
-
-            # Only block if PENDING transaction is less than 5 minutes old
-            # Older ones are considered abandoned (user ignored/dismissed the STK push)
-            five_minutes_ago = timezone.now() - timedelta(minutes=5)
-            existing_txn = WalletTransaction.objects.filter(
-                wallet=wallet,
-                transaction_type="SUBSCRIPTION",
-                status="PENDING",
-                created_at__gte=five_minutes_ago,
-            ).first()
-
-            if existing_txn:
-                return Response(
-                    {
-                        "message": "Subscription payment already initiated",
-                        "checkout_request_id": existing_txn.checkout_request_id,
-                    },
-                    status=status.HTTP_200_OK,
-                )
-
-            # Auto-expire any stale PENDING transactions before creating a new one
-            WalletTransaction.objects.filter(
-                wallet=wallet,
-                transaction_type="SUBSCRIPTION",
-                status="PENDING",
-                created_at__lt=five_minutes_ago,
-            ).update(status="FAILED")
-            
-            response = stk_push(
-                phone, int(amount), settings.MPESA_CALLBACK_URL,
-                str(apartment_id) if apartment_id else "general"
-            )
-
-            checkout_id = response.get("CheckoutRequestID")
-            merchant_id = response.get("MerchantRequestID")
-
-            if not checkout_id:
-                return Response(
-                    {"error": "STK push failed", "details": response},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            txn = WalletTransaction.objects.create(
-                wallet=wallet,
-                transaction_type="SUBSCRIPTION",
-                amount=amount,
-                status="PENDING",
-                checkout_request_id=checkout_id,
-                merchant_request_id=merchant_id,
-                phone_number=phone,
-            )
-
-            from .models import Subscription
-            Subscription.objects.create(
-                landlord=request.user,
-                apartment=apartment,  # None is now allowed
-                transaction=txn,
-                status="PENDING",
-            )
-
-            logger.info(f"Subscription transaction created: {txn.id}")
-
+        if existing_txn:
             return Response(
-                {
-                    "message": "STK push initiated successfully",
-                    "checkout_request_id": checkout_id,
-                    "merchant_request_id": merchant_id,
-                    "amount": str(amount),
-                    "phone": phone,
-                },
+                {"message": "Subscription payment already initiated", "invoice_id": existing_txn.checkout_request_id},
                 status=status.HTTP_200_OK,
             )
 
+        # Expire stale
+        WalletTransaction.objects.filter(
+            wallet=wallet,
+            transaction_type="SUBSCRIPTION",
+            status="PENDING",
+            created_at__lt=five_min_ago,
+        ).update(status="FAILED")
+
+        try:
+            response = stk_push(
+                phone_number=phone,
+                amount=int(amount),
+                narrative="Tyrent Homes - Property Listing Subscription",
+            )
         except Exception as e:
-            logger.error(f"Subscription STK Push Error: {str(e)}", exc_info=True)
+            logger.error(f"IntaSend subscription STK Push error: {e}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# ----------------- M-Pesa Callback ----------------- #
+        invoice = response.get("invoice", {})
+        invoice_id = invoice.get("invoice_id") or invoice.get("id")
 
-@csrf_exempt
-def mpesa_callback(request):
-    if request.method != "POST":
-        return JsonResponse({"ResultCode": 1, "ResultDesc": "Only POST allowed"})
+        if not invoice_id:
+            logger.error(f"No invoice_id in IntaSend response: {response}")
+            return Response(
+                {"error": "STK push failed", "details": response},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    try:
-        data = json.loads(request.body)
-        stk = data.get("Body", {}).get("stkCallback", {})
-        checkout_id = stk.get("CheckoutRequestID")
+        txn = WalletTransaction.objects.create(
+            wallet=wallet,
+            transaction_type="SUBSCRIPTION",
+            amount=amount,
+            status="PENDING",
+            checkout_request_id=invoice_id,
+            phone_number=phone,
+        )
 
-        if is_duplicate(checkout_id):
-            logger.warning(f"Duplicate callback ignored: {checkout_id}")
-            return JsonResponse({"ResultCode": 0, "ResultDesc": "Duplicate ignored"})
+        from .models import Subscription
+        Subscription.objects.create(
+            landlord=request.user,
+            apartment=apartment,
+            transaction=txn,
+            status="PENDING",
+        )
 
-        # Check PendingPayment first (booking payments)
-        pending = PendingPayment.objects.filter(checkout_request_id=checkout_id).first()
+        logger.info(f"Subscription STK Push sent: invoice_id={invoice_id}")
 
-        # Fall back to WalletTransaction (subscription payments)
-        if not pending:
-            txn = WalletTransaction.objects.filter(checkout_request_id=checkout_id).first()
-            if not txn:
-                logger.warning(f"No record found for {checkout_id}")
-                return JsonResponse({"ResultCode": 0, "ResultDesc": "Ignored"})
-            if txn.status == "COMPLETED":
-                return JsonResponse({"ResultCode": 0, "ResultDesc": "Already processed"})
+        return Response(
+            {
+                "message": "STK push sent. Enter your M-Pesa PIN to complete.",
+                "invoice_id": invoice_id,
+                "amount": str(amount),
+                "phone": phone,
+            },
+            status=status.HTTP_200_OK,
+        )
 
-        process_mpesa_callback.delay(stk)
 
-        logger.info(f"MPESA callback received: {checkout_id}")
-        return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"})
+# ── Payment Status Check ──────────────────────────────────────────────────────
 
-    except Exception as e:
-        logger.error(f"MPESA CALLBACK ERROR: {str(e)}", exc_info=True)
-        return JsonResponse({"ResultCode": 0, "ResultDesc": "Error handled"})
+class PaymentStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        invoice_id = request.query_params.get("invoice_id")
+        if not invoice_id:
+            return Response({"error": "invoice_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            response = check_status(invoice_id)
+            invoice = response.get("invoice", {})
+            state = invoice.get("state", "PENDING")
+
+            # If COMPLETE, trigger booking creation directly
+            if state == "COMPLETE":
+                from .models import PendingPayment, Wallet, WalletTransaction
+                from bookings.models import Booking
+                from django.utils import timezone
+
+                pending = PendingPayment.objects.filter(
+                    checkout_request_id=invoice_id
+                ).first()
+
+                if pending:
+                    # Check booking doesn't already exist
+                    existing = Booking.objects.filter(
+                        unit=pending.unit,
+                        payment_status="COMPLETED",
+                    ).first()
+
+                    if not existing:
+                        with transaction.atomic():
+                            mpesa_ref = invoice.get("mpesa_reference") or invoice.get("provider_ref", "")
+
+                            booking = Booking.objects.create(
+                                tenant=pending.user,
+                                landlord=pending.unit.apartment.landlord,
+                                unit=pending.unit,
+                                booking_status="PENDING",
+                                payment_status="COMPLETED",
+                                booking_amount=pending.amount,
+                                move_in_date=timezone.now().date(),
+                            )
+
+                            wallet, _ = Wallet.objects.get_or_create(
+                                user=pending.user,
+                                defaults={"wallet_type": "PLATFORM"}
+                            )
+
+                            WalletTransaction.objects.create(
+                                wallet=wallet,
+                                transaction_type="DEPOSIT",
+                                amount=pending.amount,
+                                status="COMPLETED",
+                                checkout_request_id=invoice_id,
+                                phone_number=pending.phone_number,
+                                mpesa_receipt_number=mpesa_ref,
+                                booking=booking,
+                            )
+
+                            pending.delete()
+                            logger.info(f"Booking {booking.id} created from status poll: {invoice_id}")
+
+            return Response({
+                "invoice_id": invoice_id,
+                "state": state,
+                "details": invoice
+            })
+
+        except Exception as e:
+            logger.error(f"Status check error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# ── Subscription Status ───────────────────────────────────────────────────────
 
 class SubscriptionStatusView(APIView):
     permission_classes = [IsAuthenticated]
@@ -378,3 +396,45 @@ class SubscriptionStatusView(APIView):
             status="ACTIVE",
         ).exists()
         return Response({"has_active": has_active})
+
+
+# ── IntaSend Webhook ──────────────────────────────────────────────────────────
+
+@csrf_exempt
+def intasend_webhook(request):
+    """Receives IntaSend payment notifications."""
+    if request.method != "POST":
+        return JsonResponse({"status": "error"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        logger.info(f"IntaSend webhook received: {data}")
+
+        # Verify challenge
+        challenge = data.get("challenge")
+        if settings.INTASEND_WEBHOOK_CHALLENGE and challenge != settings.INTASEND_WEBHOOK_CHALLENGE:
+            logger.warning("Invalid IntaSend webhook challenge")
+            return JsonResponse({"status": "error", "message": "Invalid challenge"}, status=403)
+
+        invoice_id = (
+            data.get("invoice_id")
+            or data.get("invoice", {}).get("invoice_id")
+            or data.get("invoice", {}).get("id")
+        )
+
+        if not invoice_id:
+            logger.warning(f"No invoice_id in webhook: {data}")
+            return JsonResponse({"status": "ignored"})
+
+        if is_duplicate(invoice_id):
+            logger.warning(f"Duplicate webhook ignored: {invoice_id}")
+            return JsonResponse({"status": "duplicate"})
+
+        # Queue for processing
+        process_intasend_webhook.delay(data)
+
+        return JsonResponse({"status": "accepted"})
+
+    except Exception as e:
+        logger.error(f"IntaSend webhook error: {e}", exc_info=True)
+        return JsonResponse({"status": "error", "message": str(e)}, status=500)

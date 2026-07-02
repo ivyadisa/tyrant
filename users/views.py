@@ -4,10 +4,10 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from django.core.mail import send_mail
 from django.db import models
-from rest_framework.parsers import MultiPartParser, FormParser
 import random
 
 from django.utils import timezone
@@ -157,16 +157,27 @@ def user_profile(request):
 # =====================================================
 # UPDATE PROFILE
 # =====================================================
-@api_view(["PUT", "PATCH"])
-@permission_classes([IsAuthenticated])
-def update_user_profile(request):
-    serializer = UserSerializer(
-        request.user, data=request.data, partial=True
-    )
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data)
-    return Response(serializer.errors, status=400)
+class UpdateUserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request):
+        serializer = UserSerializer(
+            request.user, data=request.data, partial=True
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
+
+    def put(self, request):
+        serializer = UserSerializer(
+            request.user, data=request.data, partial=False
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
 
 
 @api_view(["GET"])

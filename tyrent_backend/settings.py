@@ -301,6 +301,23 @@ MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
 MPESA_CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL", "")
 
 # --------------------------------------------------
+# PAYSTACK SETTINGS
+# --------------------------------------------------
+PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
+PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "")
+PAYSTACK_CALLBACK_URL = os.getenv("PAYSTACK_CALLBACK_URL", "")
+
+# --------------------------------------------------
+# INTASEND SETTINGS (M-Pesa STK Push)
+# --------------------------------------------------
+# IntaSend
+INTASEND_PUBLISHABLE_KEY = os.getenv("INTASEND_PUBLISHABLE_KEY", "")
+INTASEND_SECRET_KEY = os.getenv("INTASEND_SECRET_KEY", "")
+INTASEND_TEST_MODE = os.getenv("INTASEND_TEST_MODE", "True").lower() == "true"
+INTASEND_WEBHOOK_CHALLENGE = os.getenv("INTASEND_WEBHOOK_CHALLENGE", "")
+INTASEND_TRUSTED_IPS = [ip for ip in os.getenv("INTASEND_TRUSTED_IPS", "").split(",") if ip]
+
+# --------------------------------------------------
 # LOGGING
 # --------------------------------------------------
 LOGGING = {
