@@ -112,6 +112,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "wallet.tasks.expire_subscriptions",
         "schedule": crontab(hour=0, minute=0),
     },
+    "expire-stale-transactions": {
+        "task": "wallet.tasks.expire_stale_pending_transactions",
+        "schedule": crontab(minute="*/10"),  # every 10 minutes
+    },
 }
 
 # --------------------------------------------------
