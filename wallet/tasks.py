@@ -237,7 +237,6 @@ def process_intasend_webhook(self, data):
                 payment_status="COMPLETED",
             ).first()
             if existing:
-                logger.info(f"Booking already exists for unit {pending.unit.id}, skipping")
                 pending.delete()
                 return "Duplicate"
 
@@ -250,6 +249,12 @@ def process_intasend_webhook(self, data):
                 booking_amount=pending.amount,
                 move_in_date=timezone.now().date(),
             )
+
+            # Mark unit as RESERVED immediately after payment
+            pending.unit.status = "RESERVED"
+            pending.unit.save(update_fields=["status", "last_status_updated"])
+            pending.unit.apartment.recalc_unit_counts()
+
             wallet, _ = Wallet.objects.get_or_create(
                 user=pending.user,
                 defaults={"wallet_type": "PLATFORM"}

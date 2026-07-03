@@ -109,7 +109,7 @@ class BookingCancelView(generics.UpdateAPIView):
     queryset = Booking.objects.all()
 
     def update(self, request, *args, **kwargs):
-        booking = self.get_object()  # triggers has_object_permission
+        booking = self.get_object()
 
         if booking.booking_status in ["CANCELLED", "COMPLETED"]:
             return Response(
@@ -117,9 +117,15 @@ class BookingCancelView(generics.UpdateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        booking.booking_status = "CANCELLED"
-        booking.payment_status = "REFUNDED"
-        booking.save()
+        with transaction.atomic():
+            booking.booking_status = "CANCELLED"
+            booking.payment_status = "REFUNDED"
+            booking.save(update_fields=["booking_status", "payment_status", "updated_at"])
+
+            # Free the unit back to VACANT
+            booking.unit.status = "VACANT"
+            booking.unit.save(update_fields=["status", "last_status_updated"])
+            booking.unit.apartment.recalc_unit_counts()
 
         return Response(
             {"message": "Booking cancelled successfully."},
@@ -128,16 +134,12 @@ class BookingCancelView(generics.UpdateAPIView):
 
 
 class BookingConfirmView(generics.UpdateAPIView):
-    """
-    Confirm a booking — landlord moves it from PENDING → CONFIRMED.
-    Only the landlord assigned to the booking can confirm it.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated, IsLandlordOfBooking]
     queryset = Booking.objects.all()
 
     def update(self, request, *args, **kwargs):
-        booking = self.get_object()  # triggers has_object_permission
+        booking = self.get_object()
 
         if booking.booking_status != "PENDING":
             return Response(
@@ -145,8 +147,14 @@ class BookingConfirmView(generics.UpdateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        booking.booking_status = "CONFIRMED"
-        booking.save()
+        with transaction.atomic():
+            booking.booking_status = "CONFIRMED"
+            booking.save(update_fields=["booking_status", "updated_at"])
+
+            # Mark unit as OCCUPIED on landlord confirmation
+            booking.unit.status = "OCCUPIED"
+            booking.unit.save(update_fields=["status", "last_status_updated"])
+            booking.unit.apartment.recalc_unit_counts()
 
         return Response(
             {

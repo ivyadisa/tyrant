@@ -140,19 +140,41 @@ class InitiatePaymentView(APIView):
         except Unit.DoesNotExist:
             return Response({"error": "Unit not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        # Check 1: unit status — RESERVED or OCCUPIED means taken
+        if unit.status in ("RESERVED", "OCCUPIED"):
+            return Response(
+                {"error": "This unit is no longer available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check 2: active booking already exists
         has_active = Booking.objects.filter(
             unit=unit,
             booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
+            payment_status__in=["PENDING", "COMPLETED"],
         ).exists()
         if has_active:
-            return Response({"error": "Unit is already booked"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "This unit is already booked."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Block duplicate within 5 minutes
+        # Check 3: another tenant already has a pending payment for this unit
         five_min_ago = timezone.now() - timedelta(minutes=5)
+        other_pending = PendingPayment.objects.filter(
+            unit=unit,
+            created_at__gte=five_min_ago,
+        ).exclude(user=request.user).first()
+        if other_pending:
+            return Response(
+                {"error": "Another tenant is currently completing payment for this unit. Please try again shortly."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check 4: same tenant duplicate within 5 minutes
         existing = PendingPayment.objects.filter(
             user=request.user,
             unit=unit,
-            status="PENDING",
             created_at__gte=five_min_ago,
         ).first()
         if existing:
@@ -161,11 +183,10 @@ class InitiatePaymentView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Expire stale pending payments
+        # Expire stale pending payments for this tenant on this unit
         PendingPayment.objects.filter(
             user=request.user,
             unit=unit,
-            status="PENDING",
             created_at__lt=five_min_ago,
         ).update(status="FAILED")
 
@@ -173,13 +194,12 @@ class InitiatePaymentView(APIView):
             response = stk_push(
                 phone_number=phone,
                 amount=int(amount),
-                narrative=f"Tyrent Homes - Unit Booking",
+                narrative="Tyrent Homes - Unit Booking",
             )
         except Exception as e:
             logger.error(f"IntaSend STK Push error: {e}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # IntaSend SDK returns invoice details directly
         invoice = response.get("invoice", {})
         invoice_id = invoice.get("invoice_id") or invoice.get("id")
 
@@ -207,6 +227,82 @@ class InitiatePaymentView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class PaymentStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        invoice_id = request.query_params.get("invoice_id")
+        if not invoice_id:
+            return Response({"error": "invoice_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            response = check_status(invoice_id)
+            invoice = response.get("invoice", {})
+            state = invoice.get("state", "PENDING")
+
+            if state == "COMPLETE":
+                from .models import PendingPayment, Wallet, WalletTransaction
+                from bookings.models import Booking
+
+                pending = PendingPayment.objects.filter(
+                    checkout_request_id=invoice_id
+                ).first()
+
+                if pending:
+                    existing = Booking.objects.filter(
+                        unit=pending.unit,
+                        payment_status="COMPLETED",
+                    ).first()
+
+                    if not existing:
+                        with transaction.atomic():
+                            mpesa_ref = invoice.get("mpesa_reference") or invoice.get("provider_ref", "")
+
+                            booking = Booking.objects.create(
+                                tenant=pending.user,
+                                landlord=pending.unit.apartment.landlord,
+                                unit=pending.unit,
+                                booking_status="PENDING",
+                                payment_status="COMPLETED",
+                                booking_amount=pending.amount,
+                                move_in_date=timezone.now().date(),
+                            )
+
+                            # Reserve the unit immediately
+                            pending.unit.status = "RESERVED"
+                            pending.unit.save(update_fields=["status", "last_status_updated"])
+                            pending.unit.apartment.recalc_unit_counts()
+
+                            wallet, _ = Wallet.objects.get_or_create(
+                                user=pending.user,
+                                defaults={"wallet_type": "PLATFORM"}
+                            )
+
+                            WalletTransaction.objects.create(
+                                wallet=wallet,
+                                transaction_type="DEPOSIT",
+                                amount=pending.amount,
+                                status="COMPLETED",
+                                checkout_request_id=invoice_id,
+                                phone_number=pending.phone_number,
+                                mpesa_receipt_number=mpesa_ref,
+                                booking=booking,
+                            )
+
+                            pending.delete()
+                            logger.info(f"Booking {booking.id} created and unit {pending.unit.id} reserved: {invoice_id}")
+
+            return Response({
+                "invoice_id": invoice_id,
+                "state": state,
+                "details": invoice
+            })
+
+        except Exception as e:
+            logger.error(f"Status check error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ── STK Push — Subscription Payment ──────────────────────────────────────────
@@ -308,81 +404,6 @@ class InitiateSubscriptionPaymentView(APIView):
             status=status.HTTP_200_OK,
         )
 
-
-# ── Payment Status Check ──────────────────────────────────────────────────────
-
-class PaymentStatusView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        invoice_id = request.query_params.get("invoice_id")
-        if not invoice_id:
-            return Response({"error": "invoice_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            response = check_status(invoice_id)
-            invoice = response.get("invoice", {})
-            state = invoice.get("state", "PENDING")
-
-            # If COMPLETE, trigger booking creation directly
-            if state == "COMPLETE":
-                from .models import PendingPayment, Wallet, WalletTransaction
-                from bookings.models import Booking
-                from django.utils import timezone
-
-                pending = PendingPayment.objects.filter(
-                    checkout_request_id=invoice_id
-                ).first()
-
-                if pending:
-                    # Check booking doesn't already exist
-                    existing = Booking.objects.filter(
-                        unit=pending.unit,
-                        payment_status="COMPLETED",
-                    ).first()
-
-                    if not existing:
-                        with transaction.atomic():
-                            mpesa_ref = invoice.get("mpesa_reference") or invoice.get("provider_ref", "")
-
-                            booking = Booking.objects.create(
-                                tenant=pending.user,
-                                landlord=pending.unit.apartment.landlord,
-                                unit=pending.unit,
-                                booking_status="PENDING",
-                                payment_status="COMPLETED",
-                                booking_amount=pending.amount,
-                                move_in_date=timezone.now().date(),
-                            )
-
-                            wallet, _ = Wallet.objects.get_or_create(
-                                user=pending.user,
-                                defaults={"wallet_type": "PLATFORM"}
-                            )
-
-                            WalletTransaction.objects.create(
-                                wallet=wallet,
-                                transaction_type="DEPOSIT",
-                                amount=pending.amount,
-                                status="COMPLETED",
-                                checkout_request_id=invoice_id,
-                                phone_number=pending.phone_number,
-                                mpesa_receipt_number=mpesa_ref,
-                                booking=booking,
-                            )
-
-                            pending.delete()
-                            logger.info(f"Booking {booking.id} created from status poll: {invoice_id}")
-
-            return Response({
-                "invoice_id": invoice_id,
-                "state": state,
-                "details": invoice
-            })
-
-        except Exception as e:
-            logger.error(f"Status check error: {e}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ── Subscription Status ───────────────────────────────────────────────────────
 
