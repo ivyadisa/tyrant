@@ -1,9 +1,9 @@
-# bookings/views.py
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
+from django.db import transaction
 
 from .models import Booking
 from .serializers import BookingSerializer
@@ -11,11 +11,6 @@ from .permissions import IsAdminRole, IsLandlordOfBooking, IsTenantOrLandlordOfB
 
 
 class BookingCreateView(generics.CreateAPIView):
-    """
-    Create a new booking for a unit.
-    Automatically assigns the logged-in user as the tenant,
-    and the landlord from the related apartment.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -43,20 +38,15 @@ class BookingCreateView(generics.CreateAPIView):
         unit = serializer.validated_data["unit"]
         tenant = self.request.user
         landlord = unit.apartment.landlord
-
-        # For testing phase: auto-confirm bookings without payment
         serializer.save(
             tenant=tenant,
             landlord=landlord,
-            booking_status="CONFIRMED",
-            payment_status="COMPLETED",
+            booking_status="PENDING",
+            payment_status="UNPAID",
         )
 
 
 class TenantBookingListView(generics.ListAPIView):
-    """
-    List all bookings for the authenticated tenant.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -65,9 +55,6 @@ class TenantBookingListView(generics.ListAPIView):
 
 
 class LandlordBookingListView(generics.ListAPIView):
-    """
-    List all bookings for the authenticated landlord.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -76,10 +63,6 @@ class LandlordBookingListView(generics.ListAPIView):
 
 
 class BookingDetailView(generics.RetrieveAPIView):
-    """
-    Retrieve details of a specific booking by its UUID.
-    Accessible by the tenant, landlord, or an admin.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     queryset = Booking.objects.all()
@@ -88,8 +71,6 @@ class BookingDetailView(generics.RetrieveAPIView):
     def get_object(self):
         booking = super().get_object()
         user = self.request.user
-
-        # Admins and staff can view any booking
         is_admin = getattr(user, "role", None) == "ADMIN" or user.is_staff or user.is_superuser
         if not is_admin and user not in (booking.tenant, booking.landlord):
             self.permission_denied(
@@ -100,10 +81,6 @@ class BookingDetailView(generics.RetrieveAPIView):
 
 
 class BookingCancelView(generics.UpdateAPIView):
-    """
-    Cancel a booking — updates status to CANCELLED and payment to REFUNDED.
-    Only the tenant or landlord on the booking can cancel it.
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated, IsTenantOrLandlordOfBooking]
     queryset = Booking.objects.all()
@@ -122,7 +99,7 @@ class BookingCancelView(generics.UpdateAPIView):
             booking.payment_status = "REFUNDED"
             booking.save(update_fields=["booking_status", "payment_status", "updated_at"])
 
-            # Free the unit back to VACANT
+            # Free unit back to VACANT
             booking.unit.status = "VACANT"
             booking.unit.save(update_fields=["status", "last_status_updated"])
             booking.unit.apartment.recalc_unit_counts()
@@ -151,7 +128,7 @@ class BookingConfirmView(generics.UpdateAPIView):
             booking.booking_status = "CONFIRMED"
             booking.save(update_fields=["booking_status", "updated_at"])
 
-            # Mark unit as OCCUPIED on landlord confirmation
+            # Mark unit as OCCUPIED
             booking.unit.status = "OCCUPIED"
             booking.unit.save(update_fields=["status", "last_status_updated"])
             booking.unit.apartment.recalc_unit_counts()
@@ -166,15 +143,6 @@ class BookingConfirmView(generics.UpdateAPIView):
 
 
 class SuperAdminBookingListView(generics.ListAPIView):
-    """
-    List ALL bookings across the platform.
-    Restricted to users with role='ADMIN' or is_staff/is_superuser.
-    Supports filtering via query params:
-      ?booking_status=PENDING
-      ?payment_status=UNPAID
-      ?tenant=<uuid>
-      ?landlord=<uuid>
-    """
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated, IsAdminRole]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
