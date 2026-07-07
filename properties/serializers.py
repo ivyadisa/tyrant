@@ -71,13 +71,19 @@ class LeaseAgreementUploadSerializer(serializers.Serializer):
 
 class UnitSerializer(serializers.ModelSerializer):
     video_url = serializers.SerializerMethodField()
+    total_move_in_cost = serializers.SerializerMethodField()
 
     class Meta:
         model = Unit
         fields = [
             "id", "apartment", "unit_number_or_id", "category", "type",
-            "size_sqft", "price_per_month", "status", "interior_images",
-            "exterior_images", "video", "video_url", "description", "last_status_updated", "created_at", "updated_at"
+            "size_sqft", "price_per_month",
+            "deposit_amount", "water_deposit", "electricity_deposit",
+            "water_rate", "electricity_rate",
+            "total_move_in_cost",
+            "status", "interior_images", "exterior_images",
+            "video", "video_url", "description",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["last_status_updated", "created_at", "updated_at", "video_url"]
 
@@ -85,6 +91,22 @@ class UnitSerializer(serializers.ModelSerializer):
         if obj.video:
             return obj.video.url
         return None
+    
+    def get_total_move_in_cost(self, obj):
+        """
+        Calculates the total amount a tenant needs on move-in day.
+        Rent + security deposit + water deposit + electricity deposit
+        """
+        total = 0
+        if obj.price_per_month:
+            total += obj.price_per_month
+        if obj.deposit_amount:
+            total += obj.deposit_amount
+        if obj.water_deposit:
+            total += obj.water_deposit
+        if obj.electricity_deposit:
+            total += obj.electricity_deposit
+        return total if total > 0 else None
 
 
 class ApartmentLandlordSerializer(serializers.ModelSerializer):

@@ -180,6 +180,26 @@ class Unit(models.Model):
     type = models.CharField(max_length=50, blank=True)
     size_sqft = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     price_per_month = models.DecimalField(max_digits=12, decimal_places=2)
+    deposit_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Security/rent deposit amount (e.g. 1 or 2 months rent)"
+    )
+    water_deposit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Water deposit amount in KES"
+    )
+    electricity_deposit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Electricity/KPLC deposit amount in KES"
+    )
+    water_rate = models.CharField(
+        max_length=100, blank=True, null=True,
+        help_text="Water billing info e.g. 'KES 150 per unit' or 'Included in rent'"
+    )
+    electricity_rate = models.CharField(
+        max_length=100, blank=True, null=True,
+        help_text="Electricity billing info e.g. 'Token meter' or 'KES 20 per unit'"
+    )
     status = models.CharField(max_length=20, choices=OCCUPANCY_STATUS_CHOICES, default="VACANT")
     interior_images = models.JSONField(default=list, blank=True)
     exterior_images = models.JSONField(default=list, blank=True)
