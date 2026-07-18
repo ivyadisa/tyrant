@@ -197,9 +197,16 @@ if ENVIRONMENT == "production":
     DATABASES = {
         "default": dj_database_url.config(
             default=os.getenv("DATABASE_URL"),
-            conn_max_age=600,
+            conn_max_age=60,          # shorter — was 600, too long for Railway's proxy
+            conn_health_checks=True,  # Django pings before reusing a stale connection
             ssl_require=True,
         )
+    }
+    DATABASES["default"]["OPTIONS"] = {
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
     }
 else:
     DATABASES = {
