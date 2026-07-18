@@ -32,7 +32,9 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
         return None
 
     def get_apartment_name(self, obj):
-        if obj.booking and obj.booking.unit and obj.booking.unit.apartment:
+        # Use apartment_id first — checking obj.apartment truthiness
+        # directly raises RelatedObjectDoesNotExist when the FK is null
+        if obj.booking and obj.booking.unit and obj.booking.unit.apartment_id:
             return obj.booking.unit.apartment.name
         return None
 
