@@ -39,6 +39,8 @@ from .permissions import (
 )
 
 from .utils import send_otp_email, verify_user_otp
+from notifications.services import notify, notify_admin_dashboard
+from notifications.models import NotificationType
 
 
 # =====================================================
@@ -56,24 +58,34 @@ class RegisterView(generics.CreateAPIView):
             user = serializer.save()
             print(f"[DEBUG] User {user.username} created successfully.")
 
-            if not User.objects.exclude(id=user.id).exists():  # first user
+            is_first_user = not User.objects.exclude(id=user.id).exists()
+
+            if is_first_user:
                 user.role = User.ROLE_ADMIN
                 user.verification_status = User.VERIF_VERIFIED
                 user.save()
                 print(f"[DEBUG] First user set as admin: {user.username}")
 
-            # generate email OTP
             user.email_otp = f"{random.randint(100000, 999999)}"
             user.otp_expiry = timezone.now() + timezone.timedelta(minutes=10)
             user.save()
             print(f"[DEBUG] OTP generated: {user.email_otp}")
 
-            # Send email (might fail silently, so catch exception)
             try:
                 send_otp_email(user, subject="Verify your email")
                 print(f"[DEBUG] OTP email sent to {user.email}")
             except Exception as email_err:
                 print("[ERROR] Failed to send OTP email:", email_err)
+
+            # Notify admins of new registration (skip if this IS the first admin)
+            if not is_first_user:
+                notify_admin_dashboard(
+                    notification_type=NotificationType.USER_REGISTRATION,
+                    title="New User Registration",
+                    message=f"{user.full_name or user.username} registered as a {user.role.title()}.",
+                    related_object_type="User",
+                    related_object_id=user.id,
+                )
 
         except Exception as e:
             print("[ERROR] RegisterView perform_create crashed:", e)
@@ -240,6 +252,15 @@ def admin_verify_user(request, user_id):
         user.verification_date = timezone.now()
         user.save()
 
+        notify(
+            recipient=user,
+            notification_type=NotificationType.USER_VERIFICATION,
+            title="Account Verified",
+            message="Your account has been verified. You now have full access to the platform.",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
+
         return Response({"success": f"{user.role} verified successfully."})
 
     return Response(serializer.errors, status=400)
@@ -263,6 +284,16 @@ def admin_reject_user(request, user_id):
         user.verified_by_admin = request.user
         user.verification_date = timezone.now()
         user.save()
+
+        reason = user.verification_notes or "No reason provided."
+        notify(
+            recipient=user,
+            notification_type=NotificationType.USER_VERIFICATION,
+            title="Verification Rejected",
+            message=f"Your account verification was rejected. Reason: {reason}",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
 
         return Response({"success": f"{user.role} rejected successfully."})
 
@@ -322,12 +353,10 @@ def landlord_analytics(request):
     apartments = Apartment.objects.filter(landlord=user)
     apartment_ids = apartments.values_list("id", flat=True)
 
-    # Unit stats
     total_units = Unit.objects.filter(apartment__landlord=user).count()
     occupied_units = Unit.objects.filter(apartment__landlord=user, status="OCCUPIED").count()
     vacant_units = total_units - occupied_units
 
-    # Booking stats (last 30 days)
     recent_bookings = Booking.objects.filter(
         landlord=user,
         created_at__gte=thirty_days_ago
@@ -337,7 +366,6 @@ def landlord_analytics(request):
     pending_bookings = recent_bookings.filter(booking_status="PENDING").count()
     cancelled_bookings = recent_bookings.filter(booking_status="CANCELLED").count()
 
-    # Revenue (last 30 days)
     revenue = WalletTransaction.objects.filter(
         wallet__user=user,
         status="COMPLETED",
@@ -345,10 +373,8 @@ def landlord_analytics(request):
         created_at__gte=thirty_days_ago
     ).aggregate(total=models.Sum("amount"))["total"] or 0
 
-    # Occupancy trend
     occupancy_rate = round((occupied_units / total_units * 100) if total_units > 0 else 0, 1)
 
-    # Apartment performance
     apartment_performance = []
     for apt in apartments:
         apt_bookings = Booking.objects.filter(unit__apartment=apt).count()
@@ -444,6 +470,15 @@ def upload_landlord_documents(request):
 
     if serializer.is_valid():
         serializer.save()
+
+        notify_admin_dashboard(
+            notification_type=NotificationType.USER_VERIFICATION,
+            title="Landlord Documents Uploaded",
+            message=f"{request.user.full_name or request.user.username} uploaded verification documents for review.",
+            related_object_type="User",
+            related_object_id=request.user.id,
+        )
+
         return Response({"success": "Documents uploaded successfully."})
 
     return Response(serializer.errors, status=400)
@@ -459,6 +494,16 @@ def admin_promote_user(request, user_id):
         user = User.objects.get(id=user_id)
         user.role = User.ROLE_ADMIN
         user.save()
+
+        notify(
+            recipient=user,
+            notification_type=NotificationType.USER_ROLE_CHANGE,
+            title="Role Updated",
+            message="You have been promoted to Admin.",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
+
         return Response({"success": "User promoted"})
     except User.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
@@ -471,6 +516,16 @@ def admin_demote_user(request, user_id):
         user = User.objects.get(id=user_id)
         user.role = User.ROLE_TENANT
         user.save()
+
+        notify(
+            recipient=user,
+            notification_type=NotificationType.USER_ROLE_CHANGE,
+            title="Role Updated",
+            message="Your role has been changed to Tenant.",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
+
         return Response({"success": "User demoted"})
     except User.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
@@ -483,6 +538,16 @@ def admin_suspend_user(request, user_id):
         user = User.objects.get(id=user_id)
         user.status = User.STATUS_SUSPENDED
         user.save()
+
+        notify(
+            recipient=user,
+            notification_type=NotificationType.GENERAL,
+            title="Account Suspended",
+            message="Your account has been suspended. Contact support for more information.",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
+
         return Response({"success": "User suspended"})
     except User.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
@@ -495,6 +560,16 @@ def admin_unsuspend_user(request, user_id):
         user = User.objects.get(id=user_id)
         user.status = User.STATUS_ACTIVE
         user.save()
+
+        notify(
+            recipient=user,
+            notification_type=NotificationType.GENERAL,
+            title="Account Reinstated",
+            message="Your account has been reactivated. Welcome back!",
+            related_object_type="User",
+            related_object_id=user.id,
+        )
+
         return Response({"success": "User unsuspended"})
     except User.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
@@ -716,6 +791,17 @@ class ContactInquiryView(generics.CreateAPIView):
     queryset = ContactInquiry.objects.all()
     serializer_class = ContactInquirySerializer
     permission_classes = [permissions.AllowAny]
+
+    def perform_create(self, serializer):
+        inquiry = serializer.save()
+
+        notify_admin_dashboard(
+            notification_type=NotificationType.GENERAL,
+            title="New Contact Inquiry",
+            message=f"{inquiry.name} ({inquiry.email}) sent an inquiry: {inquiry.subject}",
+            related_object_type="ContactInquiry",
+            related_object_id=None,  # ContactInquiry uses int pk, not UUID — see note below
+        )
 
 
 class ContactInquiryListView(generics.ListAPIView):

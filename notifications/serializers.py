@@ -3,6 +3,7 @@ from .models import Notification, NotificationSetting, NotificationType
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for user-facing notifications."""
     class Meta:
         model = Notification
         fields = [
@@ -29,6 +30,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 
 class NotificationSettingSerializer(serializers.ModelSerializer):
+    """Serializer for user notification preferences."""
     class Meta:
         model = NotificationSetting
         fields = [
@@ -45,7 +47,7 @@ class NotificationSettingSerializer(serializers.ModelSerializer):
 
 
 class NotificationCreateSerializer(serializers.Serializer):
-    """Serializer for creating admin notifications."""
+    """Serializer for admin bulk notification creation."""
     recipient_id = serializers.UUIDField(required=False)
     recipient_role = serializers.ChoiceField(
         choices=["ADMIN", "LANDLORD", "TENANT", "ALL_LANDLORDS"],
@@ -54,5 +56,15 @@ class NotificationCreateSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=NotificationType.choices)
     title = serializers.CharField(max_length=255)
     message = serializers.CharField()
-    related_object_type = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    related_object_type = serializers.CharField(
+        max_length=50, required=False, allow_blank=True
+    )
     related_object_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, data):
+        """Ensure either recipient_id OR recipient_role is provided."""
+        if not data.get("recipient_id") and not data.get("recipient_role"):
+            raise serializers.ValidationError(
+                "Either recipient_id or recipient_role must be provided."
+            )
+        return data

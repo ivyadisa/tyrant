@@ -7,6 +7,60 @@ from django.utils import timezone
 logger = logging.getLogger("payments")
 
 
+def _notify_booking_paid(booking):
+    from notifications.services import notify, notify_admin_dashboard
+    from notifications.models import NotificationType
+
+    tenant_name = booking.tenant.get_full_name() or booking.tenant.username
+
+    notify(
+        recipient=booking.landlord,
+        notification_type=NotificationType.BOOKING_PAYMENT,
+        title="New Paid Booking",
+        message=f"{tenant_name} paid and booked Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name}.",
+        related_object_type="Booking",
+        related_object_id=booking.id,
+    )
+    notify(
+        recipient=booking.tenant,
+        notification_type=NotificationType.BOOKING_PAYMENT,
+        title="Payment Successful",
+        message=f"Your payment for Unit {booking.unit.unit_number_or_id} was successful. Awaiting landlord confirmation.",
+        related_object_type="Booking",
+        related_object_id=booking.id,
+    )
+    notify_admin_dashboard(
+        notification_type=NotificationType.BOOKING_PAYMENT,
+        title="Booking Paid",
+        message=f"{tenant_name} paid KES {booking.booking_amount} for Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name} (landlord: {booking.landlord.get_full_name() or booking.landlord.username}).",
+        related_object_type="Booking",
+        related_object_id=booking.id,
+    )
+
+
+def _notify_subscription_activated(sub):
+    from notifications.services import notify, notify_admin_dashboard
+    from notifications.models import NotificationType
+
+    landlord_name = sub.landlord.get_full_name() or sub.landlord.username
+
+    notify(
+        recipient=sub.landlord,
+        notification_type=NotificationType.APARTMENT_APPROVED,
+        title="Subscription Activated",
+        message=f"Your subscription for {sub.apartment.name} is now active. Your listing is live for 30 days.",
+        related_object_type="Apartment",
+        related_object_id=sub.apartment.id,
+    )
+    notify_admin_dashboard(
+        notification_type=NotificationType.APARTMENT_APPROVED,
+        title="Subscription Activated",
+        message=f"{landlord_name}'s subscription for {sub.apartment.name} is now active.",
+        related_object_type="Apartment",
+        related_object_id=sub.apartment.id,
+    )
+
+
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=5)
 def process_paystack_callback(self, reference):
     """Process Paystack payment callback."""
@@ -52,6 +106,10 @@ def process_paystack_callback(self, reference):
                     booking_amount=pending.amount,
                     move_in_date=timezone.now().date(),
                 )
+                pending.unit.status = "RESERVED"
+                pending.unit.save(update_fields=["status", "last_status_updated"])
+                pending.unit.apartment.recalc_unit_counts()
+
                 wallet, _ = Wallet.objects.get_or_create(
                     user=pending.user,
                     defaults={"wallet_type": "PLATFORM"}
@@ -66,6 +124,8 @@ def process_paystack_callback(self, reference):
                     booking=booking,
                 )
                 pending.delete()
+
+            _notify_booking_paid(booking)
 
             logger.info(f"Booking {booking.id} created after Paystack payment {reference}")
             return "Booking Created"
@@ -87,9 +147,12 @@ def process_paystack_callback(self, reference):
                         sub.apartment.is_approved = True
                         sub.apartment.save(update_fields=["is_approved"])
                 except Subscription.DoesNotExist:
-                    pass
+                    sub = None
 
-                logger.info(f"Subscription activated for {reference}")
+            if sub and sub.apartment_id:
+                _notify_subscription_activated(sub)
+
+            logger.info(f"Subscription activated for {reference}")
             return "Processed"
 
         logger.warning(f"No record found for reference: {reference}")
@@ -139,6 +202,10 @@ def process_mpesa_callback(self, stk_data):
                 booking_amount=pending.amount,
                 move_in_date=timezone.now().date(),
             )
+            pending.unit.status = "RESERVED"
+            pending.unit.save(update_fields=["status", "last_status_updated"])
+            pending.unit.apartment.recalc_unit_counts()
+
             wallet, _ = Wallet.objects.get_or_create(
                 user=pending.user,
                 defaults={"wallet_type": "PLATFORM"}
@@ -155,11 +222,14 @@ def process_mpesa_callback(self, stk_data):
             )
             pending.delete()
 
+        _notify_booking_paid(booking)
+
         logger.info(f"Booking {booking.id} created after M-Pesa payment {checkout_id}")
         return "Booking Created"
 
     txn = WalletTransaction.objects.filter(checkout_request_id=checkout_id).first()
     if txn:
+        sub = None
         with transaction.atomic():
             if result_code == 0:
                 txn.status = "COMPLETED"
@@ -192,6 +262,9 @@ def process_mpesa_callback(self, stk_data):
                     pass
                 logger.warning(f"Subscription payment failed: {checkout_id}")
 
+        if result_code == 0 and sub and sub.apartment_id:
+            _notify_subscription_activated(sub)
+
         return "Processed"
 
     logger.warning(f"No record found for checkout_id: {checkout_id}")
@@ -205,7 +278,6 @@ def process_intasend_webhook(self, data):
 
     logger.info(f"Processing IntaSend webhook: {data}")
 
-    # Handle both flat and nested payload structures
     invoice = data.get("invoice", {})
     if not invoice:
         invoice = data
@@ -216,7 +288,6 @@ def process_intasend_webhook(self, data):
 
     logger.info(f"Invoice {invoice_id} — state: {state}")
 
-    # Only process final states — ignore PENDING and PROCESSING
     if state not in ("COMPLETE", "FAILED", "CANCELLED"):
         logger.info(f"Ignoring non-final state '{state}' for {invoice_id}")
         return "Ignored"
@@ -250,7 +321,6 @@ def process_intasend_webhook(self, data):
                 move_in_date=timezone.now().date(),
             )
 
-            # Mark unit as RESERVED immediately after payment
             pending.unit.status = "RESERVED"
             pending.unit.save(update_fields=["status", "last_status_updated"])
             pending.unit.apartment.recalc_unit_counts()
@@ -271,12 +341,15 @@ def process_intasend_webhook(self, data):
             )
             pending.delete()
 
+        _notify_booking_paid(booking)
+
         logger.info(f"Booking {booking.id} created: {invoice_id}")
         return "Booking Created"
 
     # --- Subscription payment ---
     txn = WalletTransaction.objects.filter(checkout_request_id=invoice_id).first()
     if txn:
+        sub = None
         with transaction.atomic():
             if is_success:
                 txn.status = "COMPLETED"
@@ -309,6 +382,9 @@ def process_intasend_webhook(self, data):
                 except Subscription.DoesNotExist:
                     pass
                 logger.warning(f"Subscription payment failed: {invoice_id}")
+
+        if is_success and sub and sub.apartment_id:
+            _notify_subscription_activated(sub)
 
         return "Processed"
 

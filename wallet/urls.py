@@ -11,4 +11,5 @@ urlpatterns = [
     path("subscription/status/", views.SubscriptionStatusView.as_view(), name="subscription-status"),
     path("payment/status/", views.PaymentStatusView.as_view(), name="payment-status"),
     path("intasend/webhook/", views.intasend_webhook, name="intasend-webhook"),
+    path("admin/transactions/", views.AdminWalletTransactionListView.as_view(), name="admin-wallet-transactions"),
 ]

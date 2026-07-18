@@ -7,6 +7,14 @@ class NotificationsConfig(AppConfig):
     verbose_name = 'Notifications'
 
     def ready(self):
-        # Import signals to register them
-        from . import signals
-        signals.register_notification_signals()
+        """Import and register notification signals."""
+        # This ensures signals are registered when the app is ready
+        try:
+            from . import signals
+            signals.register_notification_signals()
+        except Exception as e:
+            # Log the error but don't crash startup
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Failed to register notification signals: {e}"
+            )
