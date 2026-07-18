@@ -62,14 +62,19 @@ class WalletTransactionListView(generics.ListAPIView):
 
 
 class AdminWalletTransactionListView(generics.ListAPIView):
-    """Admin-only: list all wallet transactions across every user, newest first."""
     serializer_class = WalletTransactionSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get_queryset(self):
         return (
             WalletTransaction.objects
-            .select_related("wallet", "wallet__user", "booking", "booking__unit", "booking__unit__apartment")
+            .select_related(
+                "wallet", 
+                "wallet__user", 
+                "booking", 
+                "booking__unit", 
+                "booking__unit__apartment"
+            )
             .order_by("-created_at")
         )
     

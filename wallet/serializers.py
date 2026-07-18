@@ -14,34 +14,48 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
     unit_number = serializers.SerializerMethodField()
     apartment_name = serializers.SerializerMethodField()
     booking_confirmation_code = serializers.SerializerMethodField()
+    mpesa_receipt_number = serializers.CharField(read_only=True)
 
     class Meta:
         model = WalletTransaction
         fields = "__all__"
 
     def get_user_name(self, obj):
-        user = obj.wallet.user
-        return user.full_name or user.username
+        try:
+            return obj.wallet.user.full_name or obj.wallet.user.username
+        except:
+            return "Unknown User"
 
     def get_user_email(self, obj):
-        return obj.wallet.user.email
+        try:
+            return obj.wallet.user.email
+        except:
+            return None
 
     def get_unit_number(self, obj):
-        if obj.booking and obj.booking.unit:
-            return obj.booking.unit.unit_number_or_id
-        return None
+        try:
+            if obj.booking and obj.booking.unit:
+                return obj.booking.unit.unit_number_or_id or str(obj.booking.unit)
+            return None
+        except:
+            return None
 
     def get_apartment_name(self, obj):
-        # Use apartment_id first — checking obj.apartment truthiness
-        # directly raises RelatedObjectDoesNotExist when the FK is null
-        if obj.booking and obj.booking.unit and obj.booking.unit.apartment_id:
-            return obj.booking.unit.apartment.name
-        return None
+        """Safe access to prevent RelatedObjectDoesNotExist"""
+        try:
+            if obj.booking and obj.booking.unit and getattr(obj.booking.unit, 'apartment_id', None):
+                return obj.booking.unit.apartment.name
+            return "N/A"
+        except Exception:
+            return "N/A"
 
     def get_booking_confirmation_code(self, obj):
-        if obj.booking:
-            return obj.booking.booking_confirmation_code
-        return None
+        try:
+            if obj.booking:
+                return obj.booking.booking_confirmation_code
+            return None
+        except:
+            return None
 
 
 class WalletSerializer(serializers.ModelSerializer):
