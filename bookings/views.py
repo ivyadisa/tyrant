@@ -8,6 +8,8 @@ from django.db import transaction
 from .models import Booking
 from .serializers import BookingSerializer
 from .permissions import IsAdminRole, IsLandlordOfBooking, IsTenantOrLandlordOfBooking
+from notifications.services import notify, notify_admin_dashboard
+from notifications.models import NotificationType
 
 
 class BookingCreateView(generics.CreateAPIView):
@@ -38,11 +40,30 @@ class BookingCreateView(generics.CreateAPIView):
         unit = serializer.validated_data["unit"]
         tenant = self.request.user
         landlord = unit.apartment.landlord
-        serializer.save(
+        booking = serializer.save(
             tenant=tenant,
             landlord=landlord,
             booking_status="PENDING",
             payment_status="UNPAID",
+        )
+
+        message = f"{tenant.get_full_name() or tenant.username} requested to book Unit {unit.unit_number_or_id} at {unit.apartment.name}."
+
+        notify(
+            recipient=landlord,
+            notification_type=NotificationType.BOOKING_REQUEST,
+            title="New Booking Request",
+            message=message,
+            related_object_type="Booking",
+            related_object_id=booking.id,
+        )
+
+        notify_admin_dashboard(
+            notification_type=NotificationType.BOOKING_REQUEST,
+            title="New Booking Request",
+            message=message,
+            related_object_type="Booking",
+            related_object_id=booking.id,
         )
 
 
@@ -94,15 +115,36 @@ class BookingCancelView(generics.UpdateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        cancelling_user = request.user
+        other_party = booking.landlord if cancelling_user == booking.tenant else booking.tenant
+
         with transaction.atomic():
             booking.booking_status = "CANCELLED"
             booking.payment_status = "REFUNDED"
             booking.save(update_fields=["booking_status", "payment_status", "updated_at"])
 
-            # Free unit back to VACANT
             booking.unit.status = "VACANT"
             booking.unit.save(update_fields=["status", "last_status_updated"])
             booking.unit.apartment.recalc_unit_counts()
+
+        message = f"The booking for Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name} has been cancelled by {cancelling_user.get_full_name() or cancelling_user.username}."
+
+        notify(
+            recipient=other_party,
+            notification_type=NotificationType.BOOKING_CANCELLED,
+            title="Booking Cancelled",
+            message=message,
+            related_object_type="Booking",
+            related_object_id=booking.id,
+        )
+
+        notify_admin_dashboard(
+            notification_type=NotificationType.BOOKING_CANCELLED,
+            title="Booking Cancelled",
+            message=message,
+            related_object_type="Booking",
+            related_object_id=booking.id,
+        )
 
         return Response(
             {"message": "Booking cancelled successfully."},
@@ -128,10 +170,28 @@ class BookingConfirmView(generics.UpdateAPIView):
             booking.booking_status = "CONFIRMED"
             booking.save(update_fields=["booking_status", "updated_at"])
 
-            # Mark unit as OCCUPIED
             booking.unit.status = "OCCUPIED"
             booking.unit.save(update_fields=["status", "last_status_updated"])
             booking.unit.apartment.recalc_unit_counts()
+
+        message = f"Your booking for Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name} has been confirmed by the landlord."
+
+        notify(
+            recipient=booking.tenant,
+            notification_type=NotificationType.BOOKING_CONFIRMED,
+            title="Booking Confirmed",
+            message=message,
+            related_object_type="Booking",
+            related_object_id=booking.id,
+        )
+
+        notify_admin_dashboard(
+            notification_type=NotificationType.BOOKING_CONFIRMED,
+            title="Booking Confirmed",
+            message=f"Booking for Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name} confirmed by landlord {booking.landlord.get_full_name() or booking.landlord.username}.",
+            related_object_type="Booking",
+            related_object_id=booking.id,
+        )
 
         return Response(
             {

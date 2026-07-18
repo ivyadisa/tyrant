@@ -21,10 +21,13 @@ from .serializers import WalletSerializer, WalletTransactionSerializer
 from .intasend import stk_push, check_status
 from .tasks import process_intasend_webhook
 from .utils import is_duplicate
+from notifications.services import notify
+from notifications.models import NotificationType
+from users.permissions import IsAdmin
 
 logger = logging.getLogger(__name__)
 
-BOOKING_AMOUNT = Decimal("10")   # KES 500 — change to your actual amount
+BOOKING_AMOUNT = Decimal("350")
 
 
 def get_or_create_wallet(user):
@@ -58,6 +61,19 @@ class WalletTransactionListView(generics.ListAPIView):
         return WalletTransaction.objects.filter(wallet=wallet)
 
 
+class AdminWalletTransactionListView(generics.ListAPIView):
+    """Admin-only: list all wallet transactions across every user, newest first."""
+    serializer_class = WalletTransactionSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get_queryset(self):
+        return (
+            WalletTransaction.objects
+            .select_related("wallet", "wallet__user", "booking", "booking__unit", "booking__unit__apartment")
+            .order_by("-created_at")
+        )
+    
+    
 class WalletDepositView(generics.CreateAPIView):
     serializer_class = WalletTransactionSerializer
     permission_classes = [IsAuthenticated]
@@ -120,7 +136,6 @@ class WalletWithdrawView(generics.CreateAPIView):
 # ── STK Push — Booking Payment ────────────────────────────────────────────────
 
 class InitiatePaymentView(APIView):
-    """Tenant pays to book a unit via M-Pesa STK Push."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
@@ -140,14 +155,12 @@ class InitiatePaymentView(APIView):
         except Unit.DoesNotExist:
             return Response({"error": "Unit not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Check 1: unit status — RESERVED or OCCUPIED means taken
         if unit.status in ("RESERVED", "OCCUPIED"):
             return Response(
                 {"error": "This unit is no longer available."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check 2: active booking already exists
         has_active = Booking.objects.filter(
             unit=unit,
             booking_status__in=["PENDING", "CONFIRMED", "PAID", "COMPLETED"],
@@ -159,7 +172,6 @@ class InitiatePaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check 3: another tenant already has a pending payment for this unit
         five_min_ago = timezone.now() - timedelta(minutes=5)
         other_pending = PendingPayment.objects.filter(
             unit=unit,
@@ -171,7 +183,6 @@ class InitiatePaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check 4: same tenant duplicate within 5 minutes
         existing = PendingPayment.objects.filter(
             user=request.user,
             unit=unit,
@@ -183,7 +194,6 @@ class InitiatePaymentView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Expire stale pending payments for this tenant on this unit
         PendingPayment.objects.filter(
             user=request.user,
             unit=unit,
@@ -243,9 +253,6 @@ class PaymentStatusView(APIView):
             state = invoice.get("state", "PENDING")
 
             if state == "COMPLETE":
-                from .models import PendingPayment, Wallet, WalletTransaction
-                from bookings.models import Booking
-
                 pending = PendingPayment.objects.filter(
                     checkout_request_id=invoice_id
                 ).first()
@@ -270,7 +277,6 @@ class PaymentStatusView(APIView):
                                 move_in_date=timezone.now().date(),
                             )
 
-                            # Reserve the unit immediately
                             pending.unit.status = "RESERVED"
                             pending.unit.save(update_fields=["status", "last_status_updated"])
                             pending.unit.apartment.recalc_unit_counts()
@@ -294,6 +300,24 @@ class PaymentStatusView(APIView):
                             pending.delete()
                             logger.info(f"Booking {booking.id} created and unit {pending.unit.id} reserved: {invoice_id}")
 
+                        # Notify both parties — outside the atomic block
+                        notify(
+                            recipient=booking.landlord,
+                            notification_type=NotificationType.BOOKING_REQUEST,
+                            title="New Paid Booking Request",
+                            message=f"{booking.tenant.get_full_name() or booking.tenant.username} paid and booked Unit {booking.unit.unit_number_or_id} at {booking.unit.apartment.name}.",
+                            related_object_type="booking",
+                            related_object_id=booking.id,
+                        )
+                        notify(
+                            recipient=booking.tenant,
+                            notification_type=NotificationType.BOOKING_CONFIRMATION,
+                            title="Payment Successful",
+                            message=f"Your payment for Unit {booking.unit.unit_number_or_id} was successful. Awaiting landlord confirmation.",
+                            related_object_type="booking",
+                            related_object_id=booking.id,
+                        )
+
             return Response({
                 "invoice_id": invoice_id,
                 "state": state,
@@ -308,13 +332,12 @@ class PaymentStatusView(APIView):
 # ── STK Push — Subscription Payment ──────────────────────────────────────────
 
 class InitiateSubscriptionPaymentView(APIView):
-    """Landlord pays subscription via M-Pesa STK Push."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         phone = request.data.get("phone") or request.data.get("phone_number")
         apartment_id = request.data.get("apartment_id")
-        amount = Decimal("500")   # KES 500 subscription fee
+        amount = Decimal("500")
 
         if not phone:
             return Response({"error": "Phone number is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -332,7 +355,6 @@ class InitiateSubscriptionPaymentView(APIView):
 
         wallet = get_or_create_wallet(request.user)
 
-        # Block duplicate within 5 minutes
         five_min_ago = timezone.now() - timedelta(minutes=5)
         existing_txn = WalletTransaction.objects.filter(
             wallet=wallet,
@@ -347,7 +369,6 @@ class InitiateSubscriptionPaymentView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Expire stale
         WalletTransaction.objects.filter(
             wallet=wallet,
             transaction_type="SUBSCRIPTION",
@@ -405,8 +426,6 @@ class InitiateSubscriptionPaymentView(APIView):
         )
 
 
-# ── Subscription Status ───────────────────────────────────────────────────────
-
 class SubscriptionStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -423,7 +442,6 @@ class SubscriptionStatusView(APIView):
 
 @csrf_exempt
 def intasend_webhook(request):
-    """Receives IntaSend payment notifications."""
     if request.method != "POST":
         return JsonResponse({"status": "error"}, status=405)
 
@@ -431,7 +449,6 @@ def intasend_webhook(request):
         data = json.loads(request.body)
         logger.info(f"IntaSend webhook received: {data}")
 
-        # Verify challenge
         challenge = data.get("challenge")
         if settings.INTASEND_WEBHOOK_CHALLENGE and challenge != settings.INTASEND_WEBHOOK_CHALLENGE:
             logger.warning("Invalid IntaSend webhook challenge")
@@ -451,7 +468,6 @@ def intasend_webhook(request):
             logger.warning(f"Duplicate webhook ignored: {invoice_id}")
             return JsonResponse({"status": "duplicate"})
 
-        # Queue for processing
         process_intasend_webhook.delay(data)
 
         return JsonResponse({"status": "accepted"})

@@ -1,50 +1,53 @@
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
-from django.db.models import Count, Q
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count
+from django.utils import timezone
 
 from .models import Notification, NotificationSetting, NotificationType
 from .serializers import (
     NotificationSerializer,
     NotificationSettingSerializer,
+    NotificationCreateSerializer,
 )
+
+
+class StandardResultsPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing user notifications."""
-
     permission_classes = [IsAuthenticated]
     serializer_class = NotificationSerializer
+    pagination_class = StandardResultsPagination
 
     def get_queryset(self):
         return Notification.objects.filter(recipient=self.request.user)
 
     def list(self, request, *args, **kwargs):
-        """List notifications for the current user."""
+        """List notifications for the current user with filtering."""
         queryset = self.get_queryset()
 
         # Filter by read status
         is_read = request.query_params.get("is_read")
         if is_read is not None:
-            queryset = queryset.filter(is_read=is_read.lower() == "true")
+            queryset = queryset.filter(is_read=is_read.lower() in ["true", "1"])
 
         # Filter by type
         notification_type = request.query_params.get("type")
         if notification_type:
             queryset = queryset.filter(type=notification_type)
 
-        # Pagination
-        page = int(request.query_params.get("page", 1))
-        page_size = int(request.query_params.get("page_size", 20))
-        start = (page - 1) * page_size
-        end = start + page_size
-
-        notifications = queryset[start:end]
-        serializer = self.get_serializer(notifications, many=True)
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
 
         return Response({
-            "notifications": serializer.data,
+            "results": serializer.data,
             "count": queryset.count(),
             "unread_count": queryset.filter(is_read=False).count(),
         })
@@ -53,30 +56,37 @@ class NotificationViewSet(viewsets.ModelViewSet):
         """Get a single notification."""
         instance = self.get_object()
         serializer = self.get_serializer(instance)
+
         return Response({
-            "results": serializer.data,        # ← was "notifications"
-            "count": queryset.count(),
-            "unread_count": queryset.filter(is_read=False).count(),
+            "results": serializer.data,
+            "count": 1,
+            "unread_count": self.get_queryset().filter(is_read=False).count(),
         })
 
     @action(detail=True, methods=["post"], url_path="read")
     def mark_read(self, request, pk=None):
+        """Mark a single notification as read."""
         notification = self.get_object()
         notification.mark_as_read()
-        return Response({"message": "Notification marked as read"})
+        serializer = self.get_serializer(notification)
+        return Response(serializer.data)
 
     @action(detail=False, methods=["post"], url_path="mark-all-read")
     def mark_all_read(self, request):
-        from django.utils import timezone
+        """Mark all notifications as read."""
         self.get_queryset().filter(is_read=False).update(
-            is_read=True, read_at=timezone.now()
+            is_read=True,
+            read_at=timezone.now()
         )
-        return Response({"success": True})
+        return Response({"success": True, "message": "All notifications marked as read"})
 
     @action(detail=False, methods=["get"], url_path="unread")
     def unread(self, request):
+        """Get only unread notifications."""
         qs = self.get_queryset().filter(is_read=False)
-        serializer = self.get_serializer(qs, many=True)
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+
         return Response({
             "results": serializer.data,
             "count": qs.count(),
@@ -93,60 +103,54 @@ class NotificationViewSet(viewsets.ModelViewSet):
             .order_by("-count")
         )
         return Response({"counts": list(counts)})
-
-
-class NotificationSettingViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing notification settings."""
-
+    
+class NotificationSettingViewSet(viewsets.GenericViewSet):
+    """ViewSet for managing notification settings (singleton per user)."""
     permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSettingSerializer
 
     def get_queryset(self):
         return NotificationSetting.objects.filter(user=self.request.user)
 
     def list(self, request, *args, **kwargs):
-        """Get notification settings for current user."""
+        """Get current user's notification settings."""
         setting, _ = NotificationSetting.objects.get_or_create(user=request.user)
-        serializer = NotificationSettingSerializer(setting)
+        serializer = self.get_serializer(setting)
         return Response(serializer.data)
 
     def partial_update(self, request, *args, **kwargs):
         """Update notification settings."""
         setting, _ = NotificationSetting.objects.get_or_create(user=request.user)
-        serializer = NotificationSettingSerializer(setting, data=request.data, partial=True)
+        serializer = self.get_serializer(setting, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
+    # Alias update to partial_update
     update = partial_update
-
-
-# ============ ADMIN ONLY VIEWS ============
 
 class AdminNotificationViewSet(viewsets.ModelViewSet):
     """Admin-only viewset for managing system notifications."""
-
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     serializer_class = NotificationSerializer
 
     def get_queryset(self):
-        # Admin can see all notifications
         return Notification.objects.all()
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["post"])
     def send_to_role(self, request):
-        """Send notification to all users of a specific role."""
+        """Send notification to users by role."""
+        serializer = NotificationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        recipient_role = serializer.validated_data.get("recipient_role")
+        notification_type = serializer.validated_data["type"]
+        title = serializer.validated_data["title"]
+        message = serializer.validated_data["message"]
+        related_object_type = serializer.validated_data.get("related_object_type")
+        related_object_id = serializer.validated_data.get("related_object_id")
+
         from users.models import User
-
-        recipient_role = request.data.get("recipient_role")
-        notification_type = request.data.get("type")
-        title = request.data.get("title")
-        message = request.data.get("message")
-
-        if not all([notification_type, title, message]):
-            return Response(
-                {"error": "type, title, and message are required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
         if recipient_role == "ALL_LANDLORDS":
             users = User.objects.filter(
@@ -159,18 +163,20 @@ class AdminNotificationViewSet(viewsets.ModelViewSet):
                 status=User.STATUS_ACTIVE
             )
 
-        notifications = []
-        for user in users:
-            notifications.append(
-                Notification(
-                    recipient=user,
-                    type=notification_type,
-                    title=title,
-                    message=message,
-                )
+        notifications = [
+            Notification(
+                recipient=user,
+                type=notification_type,
+                title=title,
+                message=message,
+                related_object_type=related_object_type,
+                related_object_id=related_object_id,
             )
+            for user in users
+        ]
 
         created = Notification.objects.bulk_create(notifications)
+
         return Response({
             "message": f"Successfully sent to {len(created)} users",
             "count": len(created)
