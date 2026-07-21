@@ -1,0 +1,21 @@
+<parameter name="content" string="true"># Fix Plan: Booking & Transaction Display Issues
+
+## Root Causes Identified
+- **Transactions "N/A"**: `wallet/serializers.py` catches all exceptions silently and returns "N/A" for non-booking transactions
+- **Bookings not showing**: `bookings/permissions.py` case-sensitive role check, `bookings/serializers.py` lacks defensive guards
+
+## Steps
+
+### Step 1 ⬜ Fix `wallet/serializers.py`
+- Fix `get_apartment_name`: return `None` (not "N/A") when no booking linked, log real errors
+- Fix `get_unit_number`: handle missing booking gracefully
+- Fix `get_booking_confirmation_code`: handle missing booking gracefully
+
+### Step 2 ⬜ Fix `bookings/serializers.py`
+- Add defensive try/except wrappers around all `SerializerMethodField` methods
+- Add logging for actual errors
+
+### Step 3 ⬜ Fix `bookings/permissions.py`
+- Log denied requests with role info for debugging
+- Add case-insensitive role check fallback
+</parameter>
