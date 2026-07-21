@@ -102,12 +102,9 @@ class SuperAdminBookingListView(generics.ListAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return (
-            Booking.objects
-            .select_related("tenant", "landlord", "unit", "unit__apartment")
-            .all()
-            .order_by("-created_at")
-        )
+        return Booking.objects.select_related(
+            "tenant", "landlord", "unit", "unit__apartment"
+        ).prefetch_related("unit__apartment").order_by("-created_at")
 
 
 class BookingDetailView(generics.RetrieveAPIView):
