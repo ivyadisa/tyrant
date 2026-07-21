@@ -72,7 +72,12 @@ class TenantBookingListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Booking.objects.filter(tenant=self.request.user).order_by("-created_at")
+        return (
+            Booking.objects
+            .select_related("tenant", "landlord", "unit", "unit__apartment")
+            .filter(tenant=self.request.user)
+            .order_by("-created_at")
+        )
 
 
 class LandlordBookingListView(generics.ListAPIView):
@@ -80,7 +85,29 @@ class LandlordBookingListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Booking.objects.filter(landlord=self.request.user).order_by("-created_at")
+        return (
+            Booking.objects
+            .select_related("tenant", "landlord", "unit", "unit__apartment")
+            .filter(landlord=self.request.user)
+            .order_by("-created_at")
+        )
+
+
+class SuperAdminBookingListView(generics.ListAPIView):
+    serializer_class = BookingSerializer
+    permission_classes = [IsAuthenticated, IsAdminRole]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["booking_status", "payment_status", "tenant", "landlord"]
+    ordering_fields = ["created_at", "move_in_date", "booking_amount"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        return (
+            Booking.objects
+            .select_related("tenant", "landlord", "unit", "unit__apartment")
+            .all()
+            .order_by("-created_at")
+        )
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -199,20 +226,4 @@ class BookingConfirmView(generics.UpdateAPIView):
                 "booking_status": booking.booking_status,
             },
             status=status.HTTP_200_OK,
-        )
-
-
-class SuperAdminBookingListView(generics.ListAPIView):
-    serializer_class = BookingSerializer
-    permission_classes = [IsAuthenticated, IsAdminRole]
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ["booking_status", "payment_status", "tenant", "landlord"]
-    ordering_fields = ["created_at", "move_in_date", "booking_amount"]
-    ordering = ["-created_at"]
-
-    def get_queryset(self):
-        return (
-            Booking.objects.select_related("tenant", "landlord", "unit")
-            .all()
-            .order_by("-created_at")
         )
