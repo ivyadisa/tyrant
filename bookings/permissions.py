@@ -1,5 +1,9 @@
 # bookings/permissions.py
+import logging
+
 from rest_framework.permissions import BasePermission
+
+logger = logging.getLogger(__name__)
 
 
 class IsAdminRole(BasePermission):
@@ -9,15 +13,27 @@ class IsAdminRole(BasePermission):
     message = "Only admin users can perform this action."
 
     def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and (
-                getattr(request.user, "role", None) == "ADMIN"
-                or request.user.is_staff
-                or request.user.is_superuser
-            )
+        if not request.user or not request.user.is_authenticated:
+            logger.warning("IsAdminRole denied: user not authenticated")
+            return False
+
+        user_role = getattr(request.user, "role", None)
+        is_admin = (
+            (user_role and user_role.upper() == "ADMIN")
+            or request.user.is_staff
+            or request.user.is_superuser
         )
+
+        if not is_admin:
+            logger.warning(
+                "IsAdminRole denied for user %s (role=%s, is_staff=%s, is_superuser=%s)",
+                request.user.id,
+                user_role,
+                request.user.is_staff,
+                request.user.is_superuser,
+            )
+
+        return is_admin
 
 
 class IsLandlordOfBooking(BasePermission):
