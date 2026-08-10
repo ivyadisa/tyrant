@@ -34,3 +34,6 @@ ENV/
 .DS_Store
 Thumbs.db
 mpesa.log
+
+tyrent_full_backup.dump
+backup.sql
