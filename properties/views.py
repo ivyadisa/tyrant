@@ -379,6 +379,36 @@ class UnitViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"], url_path="upload-exterior-video")
+    def upload_exterior_video(self, request, pk=None):
+        apartment = self.get_object()
+
+        if apartment.landlord != request.user and getattr(request.user, "role", "").upper() != "ADMIN":
+            return Response({"detail": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        video_file = request.FILES.get("video")
+        if not video_file:
+            return Response({"error": "No video file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if video_file.size > 100 * 1024 * 1024:
+            return Response({"error": "Video must be under 100MB"}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed = ['mp4', 'mov', 'avi', 'webm']
+        ext = video_file.name.split('.')[-1].lower()
+        if ext not in allowed:
+            return Response(
+                {"error": f"Invalid format. Allowed: {', '.join(allowed)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        apartment.exterior_video = video_file
+        apartment.save(update_fields=["exterior_video", "updated_at"])
+
+        return Response({
+            "message": "Exterior video uploaded successfully",
+            "video_url": apartment.exterior_video.url if apartment.exterior_video else None,
+        })
+    
     @action(detail=True, methods=["post"], url_path="upload-video", permission_classes=[IsLandlordOrReadOnly])
     def upload_video(self, request, pk=None):
         unit = self.get_object()

@@ -78,7 +78,7 @@ class UnitSerializer(serializers.ModelSerializer):
         fields = [
             "id", "apartment", "unit_number_or_id", "category", "type",
             "size_sqft", "price_per_month",
-            "deposit_amount", "water_deposit", "electricity_deposit",
+            "deposit_amount", "water_deposit", "electricity_deposit", "agreement_fee",
             "water_rate", "electricity_rate",
             "total_move_in_cost",
             "status", "interior_images", "exterior_images",
@@ -91,11 +91,11 @@ class UnitSerializer(serializers.ModelSerializer):
         if obj.video:
             return obj.video.url
         return None
-    
+
     def get_total_move_in_cost(self, obj):
         """
         Calculates the total amount a tenant needs on move-in day.
-        Rent + security deposit + water deposit + electricity deposit
+        Rent + security deposit + water deposit + electricity deposit + agreement fee
         """
         total = 0
         if obj.price_per_month:
@@ -106,6 +106,8 @@ class UnitSerializer(serializers.ModelSerializer):
             total += obj.water_deposit
         if obj.electricity_deposit:
             total += obj.electricity_deposit
+        if obj.agreement_fee:
+            total += obj.agreement_fee
         return total if total > 0 else None
 
 
@@ -130,19 +132,21 @@ class ApartmentSerializer(serializers.ModelSerializer):
     average_rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
     exterior_image_url = serializers.SerializerMethodField()
+    exterior_video_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Apartment
         fields = [
             "id", "landlord", "name", "address", "latitude", "longitude",
             "landlord_info",
-            "overview_description", "exterior_image", "exterior_image_url", "virtual_tour_url",
+            "overview_description", "exterior_image", "exterior_image_url",
+            "exterior_video", "exterior_video_url", "virtual_tour_url",
             "lease_agreement", "rules_and_policies", "amenities", "amenity_ids", "units", "amenity_distances",
             "verification_status",
             "total_units", "occupied_units", "created_at", "updated_at",
             "average_rating", "review_count"
         ]
-        read_only_fields = ["landlord", "total_units", "occupied_units", "created_at", "updated_at"]
+        read_only_fields = ["landlord", "total_units", "occupied_units", "created_at", "updated_at", "exterior_video_url"]
 
     def get_average_rating(self, obj):
         reviews = obj.reviews.all()
@@ -158,22 +162,24 @@ class ApartmentSerializer(serializers.ModelSerializer):
             return obj.exterior_image.url
         return obj.exterior_image_url
 
+    def get_exterior_video_url(self, obj):
+        if obj.exterior_video:
+            return obj.exterior_video.url
+        return None
+
     def validate_amenity_ids(self, value):
         amenities = []
         for raw_value in value:
             token = str(raw_value).strip()
             if not token:
                 continue
-
             try:
                 amenity = Amenity.objects.get(pk=token)
             except (Amenity.DoesNotExist, DjangoValidationError, ValueError, TypeError):
                 amenity = Amenity.objects.filter(name__iexact=token).first()
                 if amenity is None:
                     amenity = Amenity.objects.create(name=token)
-
             amenities.append(amenity)
-
         return amenities
 
     def create(self, validated_data):
