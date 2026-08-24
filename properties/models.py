@@ -125,16 +125,23 @@ class Apartment(models.Model):
     overview_description = models.TextField(blank=True)
     exterior_image = models.ImageField(upload_to='apartments/exterior/', blank=True, null=True)
     exterior_image_url = models.URLField(blank=True)
-    virtual_tour_url = models.URLField(blank=True, help_text="360 tour URL")
+    exterior_video = CloudinaryField(
+        'video',
+        resource_type='video',
+        blank=True,
+        null=True,
+        help_text="Uploaded video showing the outside/exterior of the property (max 100MB)"
+    )
+    virtual_tour_url = models.URLField(blank=True, help_text="External 360 tour URL (e.g. Matterport)")
     lease_agreement = models.ForeignKey(LeaseAgreement, on_delete=models.SET_NULL, null=True, blank=True, related_name="apartments_using", help_text="Latest lease agreement document")
     rules_and_policies = models.TextField(blank=True)
     amenities = models.ManyToManyField(Amenity, blank=True, related_name="apartments")
 
     verification_status = models.CharField(
-        max_length = 20,
-        choices = VerificationStatus.choices,
-        default = VerificationStatus.NOT_REQUESTED,
-        db_index = True,
+        max_length=20,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.NOT_REQUESTED,
+        db_index=True,
     )
 
     total_units = models.PositiveIntegerField(default=0)
@@ -155,14 +162,12 @@ class Apartment(models.Model):
         return self.name
 
     def recalc_unit_counts(self):
-        """Utility to recalc total and occupied units."""
         total = self.units.count()
         occupied = self.units.filter(status="OCCUPIED").count()
         self.total_units = total
         self.occupied_units = occupied
         self.save(update_fields=["total_units", "occupied_units", "updated_at"])
 
-    # ✅ Added for sitemap
     def get_absolute_url(self):
         return reverse("properties:apartment-detail", args=[str(self.id)])
 
@@ -191,6 +196,10 @@ class Unit(models.Model):
     electricity_deposit = models.DecimalField(
         max_digits=10, decimal_places=2, null=True, blank=True,
         help_text="Electricity/KPLC deposit amount in KES"
+    )
+    agreement_fee = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Tenancy/lease agreement processing fee in KES, paid on move-in"
     )
     water_rate = models.CharField(
         max_length=100, blank=True, null=True,
@@ -225,7 +234,6 @@ class Unit(models.Model):
 
     def get_absolute_url(self):
         return reverse("properties:unit-detail", args=[str(self.id)])
-
 
 class Review(models.Model):
     """Reviews and ratings for apartments."""
