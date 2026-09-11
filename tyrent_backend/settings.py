@@ -43,6 +43,9 @@ ALLOWED_HOSTS = [
     "tyrant-production-88aa.up.railway.app",
     "steadfast-happiness-production.up.railway.app",
     "peaceful-luck-production-a734.up.railway.app",
+    "just-light-production-ba00.up.railway.app",
+    "tyrant-production-f947.up.railway.app",
+    "heartfelt-delight-production-5095.up.railway.app"
     "www.tyrenthomes.com",
     "tyrenthomes.com",
     "localhost:3000",
