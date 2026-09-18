@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     "cloudinary_storage",
     "django.contrib.staticfiles",
     "cloudinary",
+    "anymail",
 
     # Third-party
     "rest_framework",
@@ -300,10 +301,12 @@ REST_FRAMEWORK = {
 if ENVIRONMENT == "development":
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 else:
-    EMAIL_BACKEND = "sendgrid_backend.SendgridBackend"
-    SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-    SENDGRID_SANDBOX_MODE_IN_DEBUG = False
-    DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
+    EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+    ANYMAIL = {
+        "BREVO_API_KEY": os.getenv("BREVO_API_KEY"),
+    }
+
+DEFAULT_FROM_EMAIL = "Tyrent Homes <no-reply@tyrenthomes.com>"
 
 
 # --------------------------------------------------
